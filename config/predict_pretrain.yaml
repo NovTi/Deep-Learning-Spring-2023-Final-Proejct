@@ -1,0 +1,35 @@
+TRAIN:
+  batch_size: 4
+  epochs: 150
+  accum_iter: 2
+  log_freq: 500  # log information every 100 iterations
+  opt: SGD  # sgd or adamw
+
+MODLE:
+  model: cvitvp
+  height: 160
+  width: 240
+  size: 224
+  norm_pix_loss: False
+  skip: False
+
+OPT:
+  weight_decay: 0.005
+  momentum: 0.9
+  nesterov: True
+  lr:
+  blr: 0.00015
+  min_lr: 1e-08
+  warmup_epochs: 10
+
+DATA:
+  output_dir: results
+  device: cuda
+  seed: 0
+  resume: ''
+  start_epoch: 0
+  root: ../../../dataset/dl/unlabeled/
+
+DIST:
+  num_workers: 16
+  pin_mem: True
