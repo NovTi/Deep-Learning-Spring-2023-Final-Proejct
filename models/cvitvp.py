@@ -124,7 +124,7 @@ class Decoder(nn.Module):
 # convolution vit video prediction
 class CViT_VP(nn.Module):
     def __init__(self, img_size=224, seq_len=11, enc_dim=768, shrink_embed=32,
-                trans_embed=192, num_heads=12, mlp_ratio=2, num_layers=9, dec_blocks=4, drop=0.0, device='cuda'):
+                trans_embed=192, num_heads=12, mlp_ratio=4, num_layers=9, dec_blocks=3, drop=0.0, device='cuda'):
         super(CViT_VP, self).__init__()
         """
         input shape: B, T, C, H, W
@@ -142,7 +142,7 @@ class CViT_VP(nn.Module):
         # nn.Conv2d(enc_dim, shrink_embed, kernel_size=5, stride=2)
         self.shrink_linear = nn.Linear(14*14*32, trans_embed)
 
-        self.translator = Translator(seq_len, trans_embed, num_heads, mlp_ratio*shrink_embed, num_layers, drop, device)
+        self.translator = Translator(seq_len, trans_embed, num_heads, mlp_ratio*trans_embed, num_layers, drop, device)
 
         # expand
         self.expand_linear = nn.Linear(trans_embed, 14*14*32)
@@ -182,7 +182,7 @@ class CViT_VP(nn.Module):
 
         # predict the frames
         if skip:
-            x = self.dec(x + 0.5*identity)
+            x = self.dec(x + identity)
         else:
             x = self.dec(x)
         

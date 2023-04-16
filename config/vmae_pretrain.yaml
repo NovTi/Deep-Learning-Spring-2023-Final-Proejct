@@ -1,0 +1,55 @@
+TRAIN:
+  batch_size: 24
+  epochs: 300
+  log_freq: 100  # log information every 100 iterations
+  save_freq: 5
+
+MODLE:
+  model: pretrain_videomae_base_patch16_224
+  decoder_depth: 4
+  mask_type: tube
+  mask_ratio: 0.75
+  input_size: 224
+  mask_ratio: 0.75
+  drop_path: 0.0
+  normlize_target: True
+
+OPT:
+  opt: adamw
+  opt_betas: [0.9, 0.95]
+  warmup_epochs: 40
+  clip_grad:
+  momentum: 0.9
+  weight_decay: 0.05
+  weight_decay_end:
+  lr: 0.0003
+  warmup_lr: 0.000001
+  warmup_epochs: 4
+  warmup_steps: -1
+  min_lr: 0.00001
+  use_checkpoint: False
+
+AUG:
+  color_jitter: 0.0
+  train_interpolation: bicubic
+
+DATA:
+  output_dir: results
+  imagenet_default_mean_and_std: True
+  num_frames: 11
+  sampling_rate: 4
+  log_dir:
+  device: cuda
+  seed: 0
+  resume: ''
+  auto_resume: True
+  start_epoch: 0
+  num_workers: 10
+  root: ../../../dataset/dl/unlabeled/
+  pin_mem: True
+
+DIST:
+  world_size: 1
+  local_rank: -1
+  dist_on_itp: False
+  distributed: False

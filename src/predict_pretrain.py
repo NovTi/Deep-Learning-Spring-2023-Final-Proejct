@@ -233,5 +233,6 @@ if __name__ == "__main__":
     msg += f'\n[exp_name]: {args.exp_name}\n[exp_id]: {args.exp_id}\n[save_path]: {args.save_path}\n'
     Log.info(msg)
 
+    # pretain
     pretrainer = Pretrainer(args)
     pretrainer.pretrain()
