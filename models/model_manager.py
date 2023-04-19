@@ -19,8 +19,8 @@ MODEL = {
     'pretrain_videomae_large_patch16_224': pretrain_videomae_large_patch16_224,
     'pretrain_videomae_huge_patch16_224': pretrain_videomae_huge_patch16_224,
     'mae_vit_base_patch16': mae_vit_base_patch16_dec512d8b,
-    'mae_vit_base_patch16': mae_vit_large_patch16_dec512d8b,
-    'mae_vit_base_patch16': mae_vit_huge_patch14_dec512d8b,
+    'mae_vit_large_patch16': mae_vit_large_patch16_dec512d8b,
+    'mae_vit_huge_patch16': mae_vit_huge_patch14_dec512d8b,
     'cvitvp': CViT_VP
 }
 

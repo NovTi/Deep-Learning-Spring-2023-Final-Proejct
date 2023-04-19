@@ -8,7 +8,7 @@ MODLE:
   model: mae_vit_base_patch16
   height: 160
   width: 240
-  size: 224
+  input_size: 224
   mask_ratio: 0.75
   norm_pix_loss: False
 
@@ -17,7 +17,7 @@ OPT:
   lr:
   blr: 0.00015
   min_lr: 1e-08
-  warmup_epochs: 20
+  warmup_epochs: 5
 
 DATA:
   output_dir: results
@@ -25,9 +25,10 @@ DATA:
   seed: 0
   resume: ''
   start_epoch: 0
-  root: ../../../dataset/dl/unlabeled/
+  root: ../../../dataset/dl/
   list_path: list/unlabeled.txt
+  flip: 0.5
 
 DIST:
-  num_workers: 16
+  num_workers: 8
   pin_mem: True

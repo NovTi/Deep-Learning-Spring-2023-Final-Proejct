@@ -70,7 +70,7 @@ class UnlabeledDataset(torch.utils.data.Dataset):
         broken_lst = [8326, 3768, 6751, 14879, 6814, 3776, 3110]
         self.video_lst = []
         self.type_lst = []
-        for i in range((13000)*4):
+        for i in range((13000)):
             if (2000+i//4) not in broken_lst:
                 self.video_lst.append(f"video_{2000+i//4}")
                 # 0: not flipped, first half   1: flipped, first half
@@ -108,6 +108,41 @@ class UnlabeledDataset(torch.utils.data.Dataset):
         img_lst = trans(img_lst)
 
         return (img_lst[:11], img_lst[11:])
+
+
+class MAEUnlabeledDataset(torch.utils.data.Dataset):
+    def __init__(self, args):
+        """
+        Args:
+            root: Location of the dataset folder, usually it is /unlabeled
+            transform: the transform you want to applied to the images.
+        """
+        self.args = args
+        # broken_lst = [8326, 3768, 6751, 14879, 6814, 3776, 3110]
+        broken_lst = [6751, 14879, 6814, 3110]
+        self.file_lst = []
+        with open(args.list_path, "r") as f:
+            for line in f:
+                self.file_lst.append(line.strip())
+
+        self.transform = transforms.Compose([
+            transforms.Resize((args.input_size, args.input_size)),
+            transforms.ToTensor(),
+            transforms.RandomHorizontalFlip(p=args.flip),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # use imagenet default mean/std
+        ])
+
+    def __len__(self):
+        return len(self.file_lst)
+
+    def __getitem__(self, idx):
+        try:
+            image = Image.open(os.path.join(self.args.root, self.file_lst[idx])).convert('RGB')
+        except:
+            Log.info(f"Can't open {os.path.join(self.args.root, self.file_lst[idx])}")
+
+        return self.transform(image)
+
 
 
 class VMAEUnlabeledDataset(torch.utils.data.Dataset):
@@ -216,7 +251,7 @@ class ValDatset(torch.utils.data.Dataset):
 
 
 # if __name__ == "__main__":
-#     dataset = UnlabeledDataset('../../../dataset/dl/unlabeled', None)
+    # dataset = UnlabeledDataset('../../../dataset/dl/unlabeled', None)
 
 
     

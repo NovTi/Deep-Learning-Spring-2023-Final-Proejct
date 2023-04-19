@@ -19,9 +19,9 @@ import timm
 assert timm.__version__ == "0.3.2"
 import timm.optim.optim_factory as optim_factory
 
-from models.models_mae import ModelManager
+from models.model_manager import ModelManager
 
-from dataset.dataset import UnlabeledDataset
+from dataset.dataset import MAEUnlabeledDataset
 
 from utils.logger import Logger as Log
 from utils.util import MetricLogger, SmoothedValue, NativeScaler
@@ -41,7 +41,8 @@ class Pretrainer(object):
         self._set_model()
 
     def _set_dataloader(self):
-        dataset_train = UnlabeledDataset(args = self.args)
+        dataset_train = MAEUnlabeledDataset(args = self.args)
+        a = dataset_train[0]
         sampler_train = torch.utils.data.RandomSampler(dataset_train)
         self.train_loader = torch.utils.data.DataLoader(
             dataset_train, sampler=sampler_train,
@@ -50,14 +51,10 @@ class Pretrainer(object):
             pin_memory=self.args.pin_mem,
             drop_last=True,
         )
-        for i, data in enumerate(self.train_loader):
-            pdb.set_trace()
-        a = 1
-        
 
     def _set_model(self):
         self.model = self.ModelManager.get_model(self.args.model)(
-            img_size = args.size,
+            img_size = self.args.input_size,
             norm_pix_loss=self.args.norm_pix_loss)
         self.model.to(self.device)
         self.model_without_ddp = self.model
@@ -147,10 +144,10 @@ class Pretrainer(object):
 
     def pretrain(self):
         Log.info("Start Training")
-        for epoch in range(self.args.epochs):
+        for epoch in range(self.args.start_epoch, self.args.epochs):
             self.train_one_epoch(epoch)
 
-            if self.args.save_path and (epoch % 10 == 0 or epoch + 1 == self.args.epochs):
+            if self.args.save_path and (epoch % 5 == 0 or epoch + 1 == self.args.epochs):
                 save_model(
                     args=self.args, model=self.model,
                     model_without_ddp=self.model_without_ddp, optimizer=self.optimizer,
