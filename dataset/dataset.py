@@ -12,7 +12,7 @@ from einops import rearrange
 from utils.logger import Logger as Log
 
 from dataset.mask_generator import TubeMaskingGenerator
-from dataset.transforms import GroupMultiScaleCrop, GroupNormalize, Stack, ToTorchFormatTensor
+from dataset.transforms import GroupMultiScaleCrop, GroupNormalize, Stack, ToTorchFormatTensor, RandomReverse, RandomHorizontalFlip
 
 
 def list_all_files(rootdir):
@@ -119,24 +119,26 @@ class VMAEUnlabeledDataset(torch.utils.data.Dataset):
             transform: the transform you want to applied to the images.
         """
         self.args = args
-        broken_lst = [8326, 3768, 6751, 14879, 6814, 3776, 3110]
         self.video_lst = []
         self.type_lst = []
-        for i in range((13000)*4):
-            if (2000+i//4) not in broken_lst:
-                self.video_lst.append(f"video_{2000+i//4}")
-                # 0: not flipped, first half   1: flipped, first half
-                # 2: not flipped, second half  3: flipped, second half
-                self.type_lst.append(i%4) # augmentation type
+
+        broken_lst = [8326, 3768, 6751, 14879, 6814, 3776, 3110]
+        for i in range(13000*2):
+            if (2000+i//2) not in broken_lst:
+                self.video_lst.append(f"video_{2000+i//2}")
+                # 0: first half   1: second half
+                self.type_lst.append(i%2) # first half or second half
 
         self.resize = transforms.Resize((args.input_size, args.input_size))
         # because the horizontal filp depends on the idx, we have to split transform into two parts
-        normalize = GroupNormalize(self.input_mean, self.input_std)
+        normalize = GroupNormalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
         self.train_augmentation = GroupMultiScaleCrop(args.input_size, [1, .875, .75, .66])
         self.transform = transforms.Compose([                            
             self.train_augmentation,
             Stack(roll=False),
-            ToTorchFormatTensor(div=True),
+            ToTorchFormatTensor(div=True),  # [(C, T), H, W]
+            RandomHorizontalFlip(p=args.flip),
+            RandomReverse(p=args.reverse),
             normalize,
         ])
         if args.mask_type == 'tube':
@@ -149,24 +151,22 @@ class VMAEUnlabeledDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         # the idx of labeled image is from 0
-        assert self.type_lst[idx] in [0, 1, 2, 3]
-        trans = transforms.RandomHorizontalFlip(p=self.type_lst[idx]%2)
+        assert self.type_lst[idx] in [0, 1]
 
-        # not flipped, first half    # flipped, first half
-        if self.type_lst[idx] == 0 or self.type_lst[idx] == 1:
+        # first half
+        if self.type_lst[idx] == 0:
             img_lst = [
-                self.resize(Image.open(os.path.join(self.args.root, f'{self.video_lst[idx]}/image_{i}.png')).convert('RGB')) for i in range(11)
+                self.resize(Image.open(os.path.join(self.args.root, f'{self.video_lst[idx]}/image_{i}.png')).convert('RGB')) for i in range(12)
             ]
-            imgs = self.transform(img_lst)[0]  # T*C, H, W
-
-        # not flipped, second half   # flipped, second half
-        elif self.type_lst[idx] == 2 or self.type_lst[idx] == 3:
+        # second half
+        elif self.type_lst[idx] == 1:
             img_lst = [
-                self.resize(Image.open(os.path.join(self.args.root, f'{self.video_lst[idx]}/image_{i+11}.png')).convert('RGB')) for i in range(11)
+                self.resize(Image.open(os.path.join(self.args.root, f'{self.video_lst[idx]}/image_{i+10}.png')).convert('RGB')) for i in range(12)
             ]
-            imgs = self.transform(img_lst)[0]  # T*C, H, W
 
-        imgs = trans(imgs)  # T*C, H, W
+        # for pretraining stage, we set label to None
+        imgs = self.transform((img_lst, None))[0]  # T*C, H, W
+
         imgs = rearrange(imgs, '(t c) h w -> c t h w', c=3)  # C, T, H, W
         
         return (imgs, self.masked_position_generator())

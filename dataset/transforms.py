@@ -1,11 +1,13 @@
 import torch
-import torchvision.transforms.functional as F
-import warnings
 import random
-import numpy as np
-import torchvision
-from PIL import Image, ImageOps
 import numbers
+import warnings
+import torchvision
+
+from PIL import Image, ImageOps
+
+import numpy as np
+import torchvision.transforms.functional as F
 
 
 class GroupRandomCrop(object):
@@ -204,3 +206,37 @@ class IdentityTransform(object):
 
     def __call__(self, data):
         return data
+
+
+class RandomReverse(object):
+    """ 
+    Reverse a sequence of frames to create a reverse video
+    """
+    def __init__(self, p):
+        # possibility of reverse
+        self.p = p
+    
+    def __call__(self, image_tuple):
+        image = image_tuple[0]
+        label = image_tuple[1]
+        # do the reversing
+        if random.random() < self.p:
+            image = torch.flip(image, (0,))
+        return (image, label)
+
+
+class RandomHorizontalFlip(object):
+    """ 
+    Horizontal flip a sequence of frames to create a new video
+    """
+    def __init__(self, p):
+        # possibility of reverse
+        self.p = p
+    
+    def __call__(self, image_tuple):
+        image = image_tuple[0]
+        label = image_tuple[1]
+        # do the reversing
+        if random.random() < self.p:
+            image = torch.flip(image, (-1,))
+        return (image, label)

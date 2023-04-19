@@ -72,7 +72,7 @@ def get_parameter_groups(model, weight_decay=1e-5, skip_list=(), get_num_layer=N
         parameter_group_vars[group_name]["params"].append(param)
         parameter_group_names[group_name]["params"].append(name)
     
-    Log.info("Param groups = %s" % json.dumps(parameter_group_names, indent=2))
+    # Log.info("Param groups = %s" % json.dumps(parameter_group_names, indent=2))
     return list(parameter_group_vars.values())
 
 
@@ -99,7 +99,7 @@ def create_optimizer(args, model, get_num_layer=None, get_layer_scale=None, filt
     if hasattr(args, 'opt_betas') and args.opt_betas is not None:
         opt_args['betas'] = args.opt_betas
 
-    Log.info("optimizer settings:", opt_args)
+    Log.info(f"optimizer settings: {opt_args}")
 
     opt_split = opt_lower.split('_')
     opt_lower = opt_split[-1]

@@ -13,6 +13,7 @@ from pathlib import Path
 from einops import rearrange
 
 import torch
+import torch.nn as nn
 import torch.backends.cudnn as cudnn
 import torchvision.transforms as transforms
 
@@ -28,10 +29,9 @@ from dataset.dataset import VMAEUnlabeledDataset
 from optimizer.get_optim import create_optimizer
 
 from utils.logger import Logger as Log
-from utils.util import NativeScaler
 from utils.util import load_cfg_from_cfg_file, merge_cfg_from_list, ensure_path
 
-from utils.vmae_util import MetricLogger, SmoothedValue, auto_load_model, cosine_scheduler, save_model
+from utils.vmae_util import MetricLogger, SmoothedValue, auto_load_model, cosine_scheduler, save_model, NativeScaler
 
 
 class Pretrainer(object):
@@ -47,10 +47,11 @@ class Pretrainer(object):
 
     def _init_settings(self):
         self.model = self.ModelManager.get_model(self.args.model)(
-            drop_path_rate=args.drop_path,
-            drop_block_rate=None,
-            decoder_depth=args.decoder_depth,
-            use_checkpoint=args.use_checkpoint
+            drop_path_rate=self.args.drop_path,
+            # drop_block_rate=None,
+            decoder_depth=self.args.decoder_depth,
+            use_checkpoint=self.args.use_checkpoint,
+            num_frames=self.args.num_frames
         )
 
         patch_size = self.model.encoder.patch_embed.patch_size
@@ -63,7 +64,7 @@ class Pretrainer(object):
 
         self.model.to(self.device)
         self.model_without_ddp = self.model
-        n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        n_parameters = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
         Log.info("\nModel = %s" % str(self.model_without_ddp))
         Log.info('Number of params: {} M\n'.format(n_parameters / 1e6))
 
@@ -71,9 +72,9 @@ class Pretrainer(object):
         self.args.min_lr = self.args.min_lr * self.total_batch_size / 256
         self.args.warmup_lr = self.args.warmup_lr * self.total_batch_size / 256
         Log.info("LR = %.8f" % args.lr)
-        Log.info("Batch size = %d" % total_batch_size)
-        Log.info("Number of training steps = %d" % num_training_steps_per_epoch)
-        Log.info("Number of training examples per epoch = %d" % (total_batch_size * num_training_steps_per_epoch))
+        Log.info("Batch size = %d" % self.total_batch_size)
+        Log.info("Number of training steps = %d" % self.num_training_steps_per_epoch)
+        Log.info("Number of training examples per epoch = %d" % (self.total_batch_size * self.num_training_steps_per_epoch))
 
         if self.args.distributed:
             self.model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=False)
@@ -97,7 +98,7 @@ class Pretrainer(object):
             self.args.weight_decay_end = self.args.weight_decay
         self.wd_schedule_values = cosine_scheduler(
             self.args.weight_decay, self.args.weight_decay_end, self.args.epochs, self.num_training_steps_per_epoch)
-        Log.info("Max WD = %.7f, Min WD = %.7f" % (max(wd_schedule_values), min(wd_schedule_values)))
+        Log.info("Max WD = %.7f, Min WD = %.7f" % (max(self.wd_schedule_values), min(self.wd_schedule_values)))
 
         auto_load_model(
             args=self.args,
@@ -108,16 +109,16 @@ class Pretrainer(object):
 
     def _set_dataloader(self):
         dataset_train = VMAEUnlabeledDataset(args=self.args)
-
-        self.total_batch_size = self.args.batch_size * num_tasks
-        self.num_training_steps_per_epoch = len(dataset_train) // total_batch_size
-
+        # a = dataset_train[0]
         # not distributed
         num_tasks = 1
         global_rank = 0
 
+        self.total_batch_size = self.args.batch_size * num_tasks
+        self.num_training_steps_per_epoch = len(dataset_train) // self.total_batch_size
+
         sampler_train = torch.utils.data.DistributedSampler(
-            dataset_train, num_replicas=num_tasks, rank=sampler_rank, shuffle=True
+            dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
         )
 
         # sampler_train = torch.utils.data.RandomSampler(dataset_train)
@@ -129,11 +130,12 @@ class Pretrainer(object):
             drop_last=True,
         )
 
-    def train_one_epoch(self, epoch):
+    def train_one_epoch(self, epoch, max_norm: float=0):
         self.model.train()
         start_time = time.time()
         metric_logger = MetricLogger(delimiter="  ")
         metric_logger.add_meter('lr', SmoothedValue(window_size=1, fmt='{value:.6f}'))
+        start_steps = epoch * self.num_training_steps_per_epoch
 
         self.optimizer.zero_grad()
         header = f'Epoch: [{epoch}]'
@@ -142,9 +144,9 @@ class Pretrainer(object):
             # adjust lr
             if self.lr_schedule_values is not None or self.wd_schedule_values is not None:
                 for i, param_group in enumerate(self.optimizer.param_groups):
-                    if lr_schedule_values is not None:
+                    if self.lr_schedule_values is not None:
                         param_group["lr"] = self.lr_schedule_values[it] * param_group["lr_scale"]
-                    if wd_schedule_values is not None and param_group["weight_decay"] > 0:
+                    if self.wd_schedule_values is not None and param_group["weight_decay"] > 0:
                         param_group["weight_decay"] = self.wd_schedule_values[it]
 
             videos, bool_masked_pos = batch
@@ -153,20 +155,20 @@ class Pretrainer(object):
 
             with torch.no_grad():
                 # calculate the predict label
-                mean = torch.as_tensor([0.485, 0.456, 0.406]).to(device)[None, :, None, None, None]
-                std = torch.as_tensor([0.229, 0.224, 0.225]).to(device)[None, :, None, None, None]
+                mean = torch.as_tensor([0.485, 0.456, 0.406]).to(self.args.device)[None, :, None, None, None]
+                std = torch.as_tensor([0.229, 0.224, 0.225]).to(self.args.device)[None, :, None, None, None]
                 unnorm_videos = videos * std + mean  # in [0, 1]
 
-                if self.args,normlize_target:
+                if self.args.normlize_target:
                     videos_squeeze = rearrange(unnorm_videos, 'b c (t p0) (h p1) (w p2) -> b (t h w) (p0 p1 p2) c', \
-                                                p0=2, p1=self.args.patch_size, p2=self.args.patch_size)
+                                                p0=2, p1=self.args.patch_size[0], p2=self.args.patch_size[0])
                     videos_norm = (videos_squeeze - videos_squeeze.mean(dim=-2, keepdim=True)
                         ) / (videos_squeeze.var(dim=-2, unbiased=True, keepdim=True).sqrt() + 1e-6)
                     # we find that the mean is about 0.48 and standard deviation is about 0.08.
                     videos_patch = rearrange(videos_norm, 'b n p c -> b n (p c)')
                 else:
                     videos_patch = rearrange(unnorm_videos, 'b c (t p0) (h p1) (w p2) -> b (t h w) (p0 p1 p2 c)', \
-                                                p0=2, p1=self.args.patch_size, p2=self.args.patch_size)
+                                                p0=2, p1=self.args.patch_size[0], p2=self.args.patch_size[0])
 
                 B, _, C = videos_patch.shape
                 labels = videos_patch[bool_masked_pos].reshape(B, -1, C)
@@ -232,7 +234,7 @@ class Pretrainer(object):
         start_time = time.time()
         Log.info("Start Training")
         for epoch in range(self.args.start_epoch, self.args.epochs):
-            self.train_one_epoch(epoch)
+            self.train_one_epoch(epoch=epoch)
 
             if self.args.save_path and (epoch % self.args.save_freq == 0 or epoch + 1 == self.args.epochs):
                 save_model(
@@ -265,7 +267,6 @@ if __name__ == "__main__":
         torch.cuda.manual_seed_all(seed)
 
     save_path = f"./results/{datetime.date.today()}:{args.exp_name}/{args.exp_id}"
-    # save_path = f"./results/{args.exp_name}/{args.exp_id}"
     save_flag = ensure_path(save_path)
     args.save_path = save_path
 
