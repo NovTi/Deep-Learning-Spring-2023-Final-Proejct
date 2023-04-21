@@ -123,8 +123,8 @@ class Decoder(nn.Module):
             masks = self.postprocess_masks(
                 #edit here!!!!
                 low_res_masks,
-                input_size=image_record.shape[-2:], #The image as a torch tensor in 3xHxW format,
-                original_size=image_record["original_size"],  #(tuple(int, int)) The original size of  the image before transformation, as (H, W).
+                input_size=torch.tensor([3, 224, 224]), #The image as a torch tensor in 3xHxW format,
+                original_size=(160,240),  #(tuple(int, int)) The original size of  the image before transformation, as (H, W).
             )
 
 
