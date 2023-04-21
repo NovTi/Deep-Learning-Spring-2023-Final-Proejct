@@ -21,7 +21,7 @@ import timm.optim.optim_factory as optim_factory
 
 from models.model_manager import ModelManager
 
-from dataset.dataset import UnlabeledDataset
+from dataset.dataset import PredictDataset
 
 from utils.logger import Logger as Log
 from utils.util import MetricLogger, SmoothedValue, NativeScaler
@@ -42,7 +42,8 @@ class Pretrainer(object):
         self._set_model()
 
     def _set_dataloader(self):
-        dataset_train = UnlabeledDataset(args = self.args)
+        dataset_train = PredictDataset(args = self.args)
+        a = dataset_train[0]
         sampler_train = torch.utils.data.RandomSampler(dataset_train)
         self.train_loader = torch.utils.data.DataLoader(
             dataset_train, sampler=sampler_train,
@@ -53,7 +54,8 @@ class Pretrainer(object):
         )
         
     def _load_weight(self):
-        checkpoint = torch.load('results/2023-04-12:pretrain-day1/resize-wscale-work8/checkpoint-120.pth', map_location='cpu')
+        # load encoder weight from MAE
+        checkpoint = torch.load(self.args.enc_weight, map_location='cpu')
         checkpoint_model = checkpoint['model']
 
         interpolate_pos_embed(self.model.enc, checkpoint_model)
@@ -65,6 +67,7 @@ class Pretrainer(object):
                 model_dict[key] = checkpoint_model[key]
             else:
                 Log.info( 'Pre-trained shape and model shape dismatch for {}'.format(key))
+                sys.exit(0)
 
         msg = self.model.enc.load_state_dict(model_dict, strict=True)
         Log.info(str(msg))
@@ -72,7 +75,7 @@ class Pretrainer(object):
 
     def _set_model(self):
         self.model = self.ModelManager.get_model(self.args.model)(
-            img_size=self.args.size, device=self.args.device)
+            img_size=self.args.input_size, device=self.args.device)
         # load the encoder weight
         self._load_weight()
         self.model.to(self.device)

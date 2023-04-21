@@ -1,3 +1,4 @@
+import pdb
 import torch
 import random
 import numbers
@@ -52,8 +53,7 @@ class GroupNormalize(object):
         self.mean = mean
         self.std = std
 
-    def __call__(self, tensor_tuple):
-        tensor, label = tensor_tuple
+    def __call__(self, tensor):
         rep_mean = self.mean * (tensor.size()[0]//len(self.mean))
         rep_std = self.std * (tensor.size()[0]//len(self.std))
         
@@ -61,7 +61,7 @@ class GroupNormalize(object):
         for t, m, s in zip(tensor, rep_mean, rep_std):
             t.sub_(m).div_(s)
 
-        return (tensor,label)
+        return tensor
 
 
 class GroupGrayScale(object):
@@ -165,19 +165,19 @@ class GroupMultiScaleCrop(object):
 
 class Stack(object):
 
-    def __init__(self, roll=False):
-        self.roll = roll
+    def __init__(self, p):
+        self.p = p
 
-    def __call__(self, img_tuple):
-        img_group, label = img_tuple
+    def __call__(self, img_group):
         
         if img_group[0].mode == 'L':
-            return (np.concatenate([np.expand_dims(x, 2) for x in img_group], axis=2), label)
+            return np.concatenate([np.expand_dims(x, 2) for x in img_group], axis=2)
         elif img_group[0].mode == 'RGB':
-            if self.roll:
-                return (np.concatenate([np.array(x)[:, :, ::-1] for x in img_group], axis=2), label)
+            if random.random() < self.p:
+                # reverse the image
+                return np.concatenate([np.array(x)[:, :, ::-1] for x in img_group], axis=2)
             else:
-                return (np.concatenate(img_group, axis=2), label)
+                return np.concatenate(img_group, axis=2)
 
 
 class ToTorchFormatTensor(object):
@@ -233,10 +233,8 @@ class RandomHorizontalFlip(object):
         # possibility of reverse
         self.p = p
     
-    def __call__(self, image_tuple):
-        image = image_tuple[0]
-        label = image_tuple[1]
+    def __call__(self, image):
         # do the reversing
         if random.random() < self.p:
             image = torch.flip(image, (-1,))
-        return (image, label)
+        return image

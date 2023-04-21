@@ -1,17 +1,18 @@
 TRAIN:
   batch_size: 4
-  epochs: 150
+  epochs: 200
   accum_iter: 2
-  log_freq: 500  # log information every 100 iterations
-  opt: SGD  # sgd or adamw
+  log_freq: 10  # log information every 100 iterations
+  opt: AdamW  # sgd or adamw
 
 MODLE:
   model: cvitvp
   height: 160
   width: 240
-  size: 224
+  input_size: 224
   norm_pix_loss: False
-  skip: False
+  skip: True
+  enc_weight: 'results/2023-04-20:mae_pretrain/resume00/checkpoint-199.pth'
 
 OPT:
   weight_decay: 0.005
@@ -30,6 +31,10 @@ DATA:
   start_epoch: 0
   root: ../../../dataset/dl/unlabeled/
 
+AUG:
+  flip: 0.5
+  reverse: 0.05
+
 DIST:
-  num_workers: 16
+  num_workers: 10
   pin_mem: True

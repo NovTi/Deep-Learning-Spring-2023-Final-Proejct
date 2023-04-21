@@ -8,6 +8,7 @@ import torchvision.transforms as transforms
 
 from PIL import Image
 from einops import rearrange
+from einops.layers.torch import Rearrange
 
 from utils.logger import Logger as Log
 
@@ -59,7 +60,7 @@ def build_trainval_list(root):
     a = 1
     
 
-class UnlabeledDataset(torch.utils.data.Dataset):
+class PredictDataset(torch.utils.data.Dataset):
     def __init__(self, args):
         """
         Args:
@@ -67,46 +68,33 @@ class UnlabeledDataset(torch.utils.data.Dataset):
             transform: the transform you want to applied to the images.
         """
         self.args = args
-        broken_lst = [8326, 3768, 6751, 14879, 6814, 3776, 3110]
+        broken_lst = [6751, 14879, 6814, 3110]
         self.video_lst = []
         self.type_lst = []
         for i in range((13000)):
-            if (2000+i//4) not in broken_lst:
-                self.video_lst.append(f"video_{2000+i//4}")
-                # 0: not flipped, first half   1: flipped, first half
-                # 2: not flipped, second half  3: flipped, second half
-                self.type_lst.append(i%4) # augmentation type
+            if (2000+i) not in broken_lst:
+                self.video_lst.append(f"video_{2000+i}")
 
-        self.post_process = transforms.Compose([
-            transforms.Resize((args.input_size, args.input_size)),
+        self.resize = transforms.Resize((args.input_size, args.input_size))
+        self.transform = transforms.Compose([
+            Stack(p=self.args.reverse),
             transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # use imagenet default mean/std
+            RandomHorizontalFlip(p=self.args.flip),
+            GroupNormalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),  # use imagenet default mean/std
+            Rearrange("(t c) h w -> t c h w", t=22)
         ])
 
     def __len__(self):
         return len(self.video_lst)
 
     def __getitem__(self, idx):
-        # the idx of labeled image is from 0
-        assert self.type_lst[idx] in [0, 1, 2, 3]
-        trans = transforms.RandomHorizontalFlip(p=self.type_lst[idx]%2)
-        
         # first resize
         img_lst = [
-            self.post_process(Image.open(os.path.join(self.args.root, f'{self.video_lst[idx]}/image_{i}.png')).convert('RGB')) for i in range(22)
+            self.resize(Image.open(os.path.join(self.args.root, f'{self.video_lst[idx]}/image_{i}.png')).convert('RGB')) for i in range(22)
         ]
+
+        img_lst = self.transform(img_lst)
         
-        # not flipped, first half    # flipped, first half
-        if self.type_lst[idx] == 0 or self.type_lst[idx] == 1:
-            img_lst = torch.stack(img_lst)
-
-        # not flipped, second half   # flipped, second half
-        elif self.type_lst[idx] == 2 or self.type_lst[idx] == 3:
-            img_lst.reverse()
-            img_lst = torch.stack(img_lst)
-
-        img_lst = trans(img_lst)
-
         return (img_lst[:11], img_lst[11:])
 
 
@@ -136,13 +124,9 @@ class MAEUnlabeledDataset(torch.utils.data.Dataset):
         return len(self.file_lst)
 
     def __getitem__(self, idx):
-        try:
-            image = Image.open(os.path.join(self.args.root, self.file_lst[idx])).convert('RGB')
-        except:
-            Log.info(f"Can't open {os.path.join(self.args.root, self.file_lst[idx])}")
+        image = Image.open(os.path.join(self.args.root, self.file_lst[idx])).convert('RGB')
 
         return self.transform(image)
-
 
 
 class VMAEUnlabeledDataset(torch.utils.data.Dataset):

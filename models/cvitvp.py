@@ -165,21 +165,21 @@ class CViT_VP(nn.Module):
         x = self.shrink(x)   # (B T), 32, 14, 14
         
         return x
-    
-    def forward_decoder(self, x, T, B, skip=False):
+
+    def forward_translator(self, x, T):
         _, d, h, _ = x.shape
-        if skip:
-            identity = x
 
         x = rearrange(x, '(b t) d h w -> b t (d h w)', t=T) # B, T, 14*14*32
-        x = self.shrink_linear(x)  # B, T, trans_embed(192)
+        x = self.shrink_linear(x)  # B, T, trans_embed (192)
 
-        x = self.translator(x)  # B, T, trans_embed(192)
+        x = self.translator(x)  # B, T, trans_embed (192)
 
         x = self.expand_linear(x) # B, T, 14*14*32  
         x = rearrange(x, 'b t (d h w) -> (b t) d h w', d=d, h=h) # (B T), 32, 14, 14
         # x = self.expand(x)  # (B T), 128, 14, 14
-
+        return x
+    
+    def forward_decoder(self, x, B, identity, skip=False):
         # predict the frames
         if skip:
             x = self.dec(x + identity)
@@ -192,8 +192,11 @@ class CViT_VP(nn.Module):
 
     def forward(self, x, y, skip=False):
         B, T, C, H, W = x.shape
+        # MAE encoder
         x = self.forward_encoder(x)
-        x = self.forward_decoder(x, T, B, skip=skip)
+        identity = x
+        x = self.forward_translator(x, T)
+        x = self.forward_decoder(x, B, identity, skip=skip)
         loss = self.forward_loss(x, y, B)
 
         return loss
