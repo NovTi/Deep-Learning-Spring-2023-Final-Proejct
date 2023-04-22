@@ -1,4 +1,5 @@
 import os
+import pdb
 import yaml
 import math
 import time
@@ -69,6 +70,42 @@ class CfgNode(dict):
 
     def __repr__(self):
         return "{}({})".format(self.__class__.__name__, super(CfgNode, self).__repr__())
+
+    def update(self):
+        """
+        exp_id: ft_se32_te768_hd12_mp4_l9_w3_eff11
+        [ft, se32, te768, hd12, mp4, l9, w3]
+        freeze_enc: True, shrink_embed: 32, trans_embed: 768, num_head: 12
+        num_layer: 9, warmup_epochs : 3, eff_batch_adjust: 11
+        """
+        msg = "\nUpdate: \n"
+        update_lst = self.exp_id.split("_")
+        self.freeze_enc = 't' in update_lst[0][1:]
+        msg += f"   freeze_enc: {self.freeze_enc}\n"
+
+        self.shrink_embed = int(update_lst[1][2:])
+        msg += f"   shrink_embed: {self.shrink_embed}\n"
+
+        self.trans_embed = int(update_lst[2][2:])
+        msg += f"   trans_embed: {self.trans_embed}\n"
+
+        self.num_heads = int(update_lst[3][2:])
+        msg += f"   num_heads: {self.num_heads}\n"
+
+        self.mlp_ratio = int(update_lst[4][2:])
+        msg += f"   mlp_ratio: {self.mlp_ratio}\n"
+
+        self.num_layers = int(update_lst[5][1:])
+        msg += f"   num_layers: {self.num_layers}\n"
+
+        self.warmup_epochs = int(update_lst[6][1:])
+        msg += f"   warmup_epochs: {self.warmup_epochs}\n"
+
+        self.eff_batch_adjust = int(update_lst[7][3:])
+        msg += f"   eff_batch_adjust: {self.warmup_epochs}\n"
+
+        Log.info(msg)
+
 
 def _decode_cfg_value(v):
     if not isinstance(v, str):
@@ -601,6 +638,35 @@ class MetricLogger(object):
 # ============
 # === Mine ===
 # ============
+
+def add_weight_decay(model, freeze_enc, scale, weight_decay=1e-5, skip_list=()):
+    decay = []
+    no_decay = []
+    enc_weight = []
+    for name, param in model.named_parameters():
+        # deal with encoder parameters
+        if name[:3] == 'enc':
+            if freeze_enc:
+                continue  # frozen weights
+            else:
+                enc_weight.append(param)
+        # translator and decoder parameters
+        else:
+            if len(param.shape) == 1 or name.endswith(".bias") or name in skip_list:
+                no_decay.append(param)
+            else:
+                decay.append(param)
+
+    if freeze_enc:
+        return [
+            {'params': no_decay, 'weight_decay': 0.},
+            {'params': decay, 'weight_decay': weight_decay}]
+    else:
+        return [
+            {'params': no_decay, 'weight_decay': 0.},
+            {'params': decay, 'weight_decay': weight_decay},
+            {'params': enc_weight, 'weight_decay': weight_decay, "lr_scale": scale}]
+
 
 def ensure_path(path):
     remove_flag = False

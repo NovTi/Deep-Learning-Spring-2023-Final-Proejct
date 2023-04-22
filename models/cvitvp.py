@@ -140,15 +140,15 @@ class CViT_VP(nn.Module):
         # shrink the embedding dimension to save computation in ViT
         self.shrink = nn.Conv2d(enc_dim, shrink_embed, kernel_size=1, stride=1)
         # nn.Conv2d(enc_dim, shrink_embed, kernel_size=5, stride=2)
-        self.shrink_linear = nn.Linear(14*14*32, trans_embed)
+        self.shrink_linear = nn.Linear(14*14*shrink_embed, trans_embed)
 
         self.translator = Translator(seq_len, trans_embed, num_heads, mlp_ratio*trans_embed, num_layers, drop, device)
 
         # expand
-        self.expand_linear = nn.Linear(trans_embed, 14*14*32)
+        self.expand_linear = nn.Linear(trans_embed, 14*14*shrink_embed)
         # self.expand = nn.Conv2d(shrink_embed, 64, kernel_size=1, stride=1)
 
-        self.dec = Decoder(32, 3, dec_blocks, spatio_kernel=3)
+        self.dec = Decoder(shrink_embed, 3, dec_blocks, spatio_kernel=5)
 
         self.criterion = nn.MSELoss()
 

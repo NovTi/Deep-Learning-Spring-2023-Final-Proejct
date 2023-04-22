@@ -2,7 +2,8 @@ TRAIN:
   batch_size: 4
   epochs: 200
   accum_iter: 2
-  log_freq: 10  # log information every 100 iterations
+  log_freq: 200  # log information every 100 iterations
+  save_freq: 5
   opt: AdamW  # sgd or adamw
 
 MODLE:
@@ -12,7 +13,17 @@ MODLE:
   input_size: 224
   norm_pix_loss: False
   skip: True
-  enc_weight: 'results/2023-04-20:mae_pretrain/resume00/checkpoint-199.pth'
+  enc_weight: 'results/mae_pretrain(fully trained)/resume00/checkpoint-199.pth'
+  enc_dim: 768   # encoder
+  shrink_embed: 32   # shrink channel from 768 to 32 fro saving computation
+  trans_embed: 768  # translator
+  num_heads: 12  # translator
+  mlp_ratio: 4  # translator
+  num_layers: 9  # translator
+  dropout: 0.0  # translator
+  dec_blocks: 3  # decoder
+  freeze_enc: True  # freeze encoder
+  enc_lr_scalar: 0.1  # decrease loss backwards to encoder
 
 OPT:
   weight_decay: 0.005
@@ -22,9 +33,11 @@ OPT:
   blr: 0.00015
   min_lr: 1e-08
   warmup_epochs: 5
+  eff_batch_adjust: 11
 
 DATA:
   output_dir: results
+  num_frames: 11
   device: cuda
   seed: 0
   resume: ''

@@ -26,7 +26,7 @@ from dataset.dataset import PredictDataset
 from utils.logger import Logger as Log
 from utils.util import MetricLogger, SmoothedValue, NativeScaler
 from utils.util import adjust_learning_rate, ensure_path, interpolate_pos_embed
-from utils.util import load_cfg_from_cfg_file, merge_cfg_from_list, load_model, save_model
+from utils.util import load_cfg_from_cfg_file, merge_cfg_from_list, load_model, save_model, add_weight_decay
 
 
 class Pretrainer(object):
@@ -43,7 +43,6 @@ class Pretrainer(object):
 
     def _set_dataloader(self):
         dataset_train = PredictDataset(args = self.args)
-        a = dataset_train[0]
         sampler_train = torch.utils.data.RandomSampler(dataset_train)
         self.train_loader = torch.utils.data.DataLoader(
             dataset_train, sampler=sampler_train,
@@ -66,7 +65,7 @@ class Pretrainer(object):
             if model_dict[key].shape == checkpoint_model[key].shape:
                 model_dict[key] = checkpoint_model[key]
             else:
-                Log.info( 'Pre-trained shape and model shape dismatch for {}'.format(key))
+                Log.info('Pre-trained shape and model shape dismatch for {}'.format(key))
                 sys.exit(0)
 
         msg = self.model.enc.load_state_dict(model_dict, strict=True)
@@ -75,16 +74,29 @@ class Pretrainer(object):
 
     def _set_model(self):
         self.model = self.ModelManager.get_model(self.args.model)(
-            img_size=self.args.input_size, device=self.args.device)
-        # load the encoder weight
+            img_size=self.args.input_size,
+            shrink_embed=self.args.shrink_embed,
+            trans_embed=self.args.trans_embed,
+            num_heads=self.args.num_heads,
+            mlp_ratio=self.args.mlp_ratio,
+            num_layers=self.args.num_layers,
+            device=self.args.device)
+        # load the MAE encoder weight
         self._load_weight()
+
+        # freeze the encoder parameters
+        if self.args.freeze_enc:    
+            for name, param in self.model.named_parameters():
+                if name[:3] == 'enc':
+                    param.requires_grad = False
+
         self.model.to(self.device)
-        
-        # self.model_without_ddp = self.model
+            
+        self.model_without_ddp = self.model
         # Log.info("\nModel = %s" % str(self.model_without_ddp))
         Log.info("\nModel = %s" % str(self.model))
 
-        eff_batch_size = self.args.batch_size * self.args.accum_iter
+        eff_batch_size = self.args.batch_size * self.args.accum_iter * self.args.eff_batch_adjust
         self.args.lr = self.args.blr * eff_batch_size / 256
         Log.info("base lr: %.2e" % (self.args.lr * 256 / eff_batch_size))
         Log.info("actual lr: %.2e" % self.args.lr)
@@ -98,7 +110,7 @@ class Pretrainer(object):
 
         # set optimizer
         # param_groups = optim_factory.add_weight_decay(self.model_without_ddp, self.args.weight_decay)
-        param_groups = optim_factory.add_weight_decay(self.model, self.args.weight_decay)
+        param_groups = add_weight_decay(self.model_without_ddp, self.args.freeze_enc, self.args.enc_lr_scalar, self.args.weight_decay)
         if self.args.opt == 'SGD':
             self.optimizer = torch.optim.SGD(
                 param_groups, lr=self.args.lr,
@@ -110,11 +122,11 @@ class Pretrainer(object):
         Log.info(f"Using {self.args.opt} optimizer")
         self.loss_scaler = NativeScaler()
 
-        # load_model(
-        #     args=self.args,
-        #     model_without_ddp=self.model_without_ddp,
-        #     optimizer=self.optimizer,
-        #     loss_scaler=self.loss_scaler)
+        load_model(
+            args=self.args,
+            model_without_ddp=self.model_without_ddp,
+            optimizer=self.optimizer,
+            loss_scaler=self.loss_scaler)
 
     def train_one_epoch(self, epoch):
         self.model.train()
@@ -178,7 +190,7 @@ class Pretrainer(object):
         for epoch in range(self.args.epochs):
             self.train_one_epoch(epoch)
 
-            if self.args.save_path and (epoch % 10 == 0 or epoch + 1 == self.args.epochs):
+            if self.args.save_path and (epoch % self.args.save_freq == 0 or epoch + 1 == self.args.epochs):
                 save_model(
                     args=self.args, model=self.model,
                     model_without_ddp=None, optimizer=self.optimizer,
@@ -211,7 +223,7 @@ if __name__ == "__main__":
     # deal with the scienciftic num
     args.min_lr = 1e-08
     # deal with skip
-    if args.exp_id == 'skip':
+    if 'skip' in args.exp_id:
         args.skip = True
     else:
         args.skip = False
@@ -236,6 +248,8 @@ if __name__ == "__main__":
     msg += f'\n[exp_name]: {args.exp_name}\n[exp_id]: {args.exp_id}\n[save_path]: {args.save_path}\n'
     Log.info(msg)
 
+    args.update()
+    pdb.set_trace()
     # pretain
     pretrainer = Pretrainer(args)
     pretrainer.pretrain()
