@@ -102,7 +102,7 @@ class CfgNode(dict):
         msg += f"   warmup_epochs: {self.warmup_epochs}\n"
 
         self.eff_batch_adjust = int(update_lst[7][3:])
-        msg += f"   eff_batch_adjust: {self.warmup_epochs}\n"
+        msg += f"   eff_batch_adjust: {self.eff_batch_adjust}\n"
 
         Log.info(msg)
 

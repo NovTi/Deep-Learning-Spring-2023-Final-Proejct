@@ -13,7 +13,7 @@ MODLE:
   input_size: 224
   norm_pix_loss: False
   skip: True
-  enc_weight: 'results/mae_pretrain/resume00/checkpoint-199.pth'
+  enc_weight: 'results/mae_pretrain(fully trained)/resume00/checkpoint-199.pth'
   enc_dim: 768   # encoder
   shrink_embed: 32   # shrink channel from 768 to 32 fro saving computation
   trans_embed: 768  # translator
@@ -40,7 +40,7 @@ DATA:
   num_frames: 11
   device: cuda
   seed: 0
-  resume: ''
+  resume: 'results/2023-04-21:predict_pretrain/skip_warm5_768'
   start_epoch: 0
   root: ../../../dataset/dl/unlabeled/
 

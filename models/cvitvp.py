@@ -162,20 +162,20 @@ class CViT_VP(nn.Module):
         x = rearrange(x, 'b (h w) d -> b d h w', h=seq_len) # (B T), 768, 14, 14
 
         # project to a lower dim
-        x = self.shrink(x)   # (B T), 32, 14, 14
+        x = self.shrink(x)   # (B T), shrink_embed, 14, 14
         
         return x
 
     def forward_translator(self, x, T):
         _, d, h, _ = x.shape
 
-        x = rearrange(x, '(b t) d h w -> b t (d h w)', t=T) # B, T, 14*14*32
-        x = self.shrink_linear(x)  # B, T, trans_embed (192)
+        x = rearrange(x, '(b t) d h w -> b t (d h w)', t=T) # B, T, 14*14*shrink_embed
+        x = self.shrink_linear(x)  # B, T, trans_embed
 
-        x = self.translator(x)  # B, T, trans_embed (192)
+        x = self.translator(x)  # B, T, trans_embed
 
-        x = self.expand_linear(x) # B, T, 14*14*32  
-        x = rearrange(x, 'b t (d h w) -> (b t) d h w', d=d, h=h) # (B T), 32, 14, 14
+        x = self.expand_linear(x) # B, T, 14*14*shrink_embed  
+        x = rearrange(x, 'b t (d h w) -> (b t) d h w', d=d, h=h) # (B T), shrink_embed, 14, 14
         # x = self.expand(x)  # (B T), 128, 14, 14
         return x
     
@@ -185,7 +185,7 @@ class CViT_VP(nn.Module):
             x = self.dec(x + identity)
         else:
             x = self.dec(x)
-        
+        # (B T), shrink_embed, 14, 14
         x = rearrange(x, '(b t) c h w -> b t c h w', b=B) # x.reshape(B, 11, 3, 224, 224)
 
         return x

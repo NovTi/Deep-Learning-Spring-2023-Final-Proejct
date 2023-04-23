@@ -85,7 +85,7 @@ class Pretrainer(object):
         self._load_weight()
 
         # freeze the encoder parameters
-        if self.args.freeze_enc:    
+        if self.args.freeze_enc:
             for name, param in self.model.named_parameters():
                 if name[:3] == 'enc':
                     param.requires_grad = False
@@ -249,7 +249,7 @@ if __name__ == "__main__":
     Log.info(msg)
 
     args.update()
-    pdb.set_trace()
+
     # pretain
     pretrainer = Pretrainer(args)
     pretrainer.pretrain()
