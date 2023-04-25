@@ -24,18 +24,29 @@ MODLE:
   num_layers: 9  # translator
   dropout: 0.0  # translator
   dec_blocks: 2  # decoder
-  freeze_enc: True 
+  freeze_enc: True
+
+SEGHEAD:
+  seghead: pspnet
+  classifier:
   bn_type: torchbn
-  seghead: hrnet48
+  proj_dim: 256
+  bottle_type: 2  # orginal one
+  bottle_conv: 1
+  cls_lr: 0.08
+  adapt_iters: 100
+  bottle_lr_time: 0.1
+  bottle_ft: False
+  translator_ft: True
 
 OPT:
   weight_decay: 0.005
   momentum: 0.9
   nesterov: True
   lr:
-  blr: 0.0008  # 0.00015
+  blr: 0.002  # 0.00015
   min_lr: 1e-08
-  warmup_epochs: 3
+  warmup_epochs: 2
   eff_batch_adjust: 11  # equal to adjusting learning rate
 
 DATA:

@@ -18,7 +18,7 @@ from collections import OrderedDict
 
 from utils.logger import Logger as Log
 
-from models.hrnet.module_helper import ModuleHelper
+from models.module_helper import ModuleHelper
 from models.hrnet.hrnet_config import MODEL_CONFIGS
 from models.hrnet.hrnet_backbone import HighResolutionNet
 

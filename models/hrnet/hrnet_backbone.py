@@ -19,7 +19,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from utils.logger import Logger as Log
-from models.hrnet.module_helper import ModuleHelper
+from models.module_helper import ModuleHelper
 
 if torch.__version__.startswith('1'):
     relu_inplace = True

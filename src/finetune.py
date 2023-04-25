@@ -1,6 +1,7 @@
 import os
 import sys
 import pdb
+import copy
 import math
 import time
 import random
@@ -18,13 +19,15 @@ import timm
 assert timm.__version__ == "0.3.2"
 import timm.optim.optim_factory as optim_factory
 
+from torchmetrics import JaccardIndex
+
 from models.model_manager import ModelManager
 
 from dataset.dataset import TrainDatset, ValDatset
 
 from utils.logger import Logger as Log
 from utils.util import MetricLogger, SmoothedValue, NativeScaler
-from utils.util import adjust_learning_rate, ensure_path, interpolate_pos_embed, intersectionAndUnionGPU
+from utils.util import adjust_learning_rate_ft, ensure_path, interpolate_pos_embed, intersectionAndUnionGPU
 from utils.util import load_cfg_from_cfg_file, merge_cfg_from_list, load_model_noddp, save_model_noddp, add_weight_decay_ft
 
 
@@ -109,7 +112,7 @@ class Finetuner(object):
         self._load_module_weight(self.model.shrink, 'shrink', checkpoint)
         self._load_module_weight(self.model.shrink_linear, 'shrink_linear', checkpoint)
         self._load_module_weight(self.model.translator, 'translator', checkpoint)
-        self._load_module_weight(self.model.expand_linear, 'expand_linear', checkpoint)
+        # self._load_module_weight(self.model.expand_linear, 'expand_linear', checkpoint)
 
 
     def _set_model(self):
@@ -146,7 +149,11 @@ class Finetuner(object):
             self.model = torch.nn.DataParallel(self.model, device_ids=[i for i in range(torch.cuda.device_count())])
 
         # set optimizer
-        param_groups = add_weight_decay_ft(self.model, self.args.freeze_enc, weight_decay=self.args.weight_decay)
+        param_groups = add_weight_decay_ft(
+            self.model,
+            translator_ft=self.args.translator_ft,
+            weight_decay=self.args.weight_decay
+        )
         if self.args.opt == 'SGD':
             self.optimizer = torch.optim.SGD(
                 param_groups, lr=self.args.lr,
@@ -178,7 +185,7 @@ class Finetuner(object):
         # for data_iter_step, (imgs, mask, catmask) in enumerate(self.train_loader):
             # per iteration lr scheduler
             if data_iter_step % self.args.accum_iter == 0:
-                adjust_learning_rate(self.optimizer, data_iter_step / len(self.train_loader) + epoch, self.args)
+                adjust_learning_rate_ft(self.optimizer, data_iter_step / len(self.train_loader) + epoch, self.args)
 
             imgs = imgs.to(self.device, non_blocking=True, dtype=torch.float)
             mask = mask.to(self.device, non_blocking=True, dtype=torch.float)
@@ -220,19 +227,92 @@ class Finetuner(object):
 
 
     def validation(self):
-        # add meta loop here
+        self.model.eval()
+        start_time = time.time()
+        metric_logger = MetricLogger(delimiter="  ")
+        # metric
+        jaccard = JaccardIndex(task="multiclass", num_classes=49)
 
-        # add metric here for evaluation
-        # intersection, union, target = intersectionAndUnionGPU(pred.argmax(1), rearrange(mask, 'b t c h w -> (b t) c h w').argmax(1), 49, 255)
+        metric_logger.add_meter('lr', SmoothedValue(window_size=1, fmt='{value:.6f}'))
+        
+        self.optimizer.zero_grad()
+        header = f'Epoch: [{epoch}]'
 
-        # IoUb, IoUf = (intersection / (union + 1e-10)).cpu().numpy()  # mean of BG and FG  
-        pass
+        for data_iter_step, (imgs, mask, catmask) in enumerate(metric_logger.log_every(self.train_loader, self.args.log_freq, header)):
+            # per iteration lr scheduler
+            imgs = imgs.to(self.device, non_blocking=True, dtype=torch.float)
+            mask = mask.to(self.device, non_blocking=True, dtype=torch.float)
+            catmask = catmask.to(self.device, non_blocking=True, dtype=torch.float)
+
+            with torch.no_grad():
+                embeddings = self.model(imgs, catmask, mask, self.args.skip)
+
+            # add meta loop here
+            classifier = copy.deepcopy(self.model.seghead.classifier)
+            classifier.eval()                       # freeze local params in BN layer
+            # classifier.cls = nn.Conv2d(512, 2, kernel_size=1, stride=1, bias=True)
+            classifier = classifier.cuda()
+            bottleneck = copy.deepcopy(self.model.seghead.bottleneck)
+
+            bottle_ft = self.args.bottle_ft
+
+            # finetune classifier when odd number of iter
+            if self.args.bottle_ft == True and bottle_ft:  # fine tune the bottleneck
+                bottleneck.train(mode=True)
+                bottleneck = bottleneck
+                bottleneck_lr = self.args.bottle_lr_time*self.args.cls_lr
+                param_groups = [
+                    {'params':bottleneck.parameters(), 'lr': bottleneck_lr},
+                    {'params':classifier.cls.parameters()}  # , 'lr': self.configer.get('adapt', 'cls_lr')
+                ]
+                optimizer = torch.optim.SGD(param_groups, lr=self.args.cls_lr)
+            elif not bottle_ft:  # finetune classifier first
+                optimizer = torch.optim.SGD(classifier.cls.parameters(), lr=self.args.cls_lr)
+
+            # fine-tune classifier or both bottleneck and classifer
+            for index in range(self.args.adapt_iters):
+                # embeddings: {'x_bt': x_bt, 'seg': x_seg, 'x_psp': x_psp}
+                # bottleneck
+                x = bottleneck(torch.cat(embeddings['x_psp'], 1))
+                # seg module
+                x = classifier(x)   # [(B, 22), 2(cls), 56, 56]
+
+                if index == 0:
+                    before_miou = jaccard(x, mask)
+
+                loss = self.model.forward_loss(x, mask)
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+            after_miou = jaccard(x, mask)
+
+
+            # add metric here for evaluation
+            # intersection, union, target = intersectionAndUnionGPU(pred.argmax(1), rearrange(mask, 'b t c h w -> (b t) c h w').argmax(1), 49, 255)
+
+            # IoUb, IoUf = (intersection / (union + 1e-10)).cpu().numpy()  # mean of BG and FG 
+
+            torch.cuda.synchronize()
+
+        # gather the stats from all processes
+        metric_logger.synchronize_between_processes()
+        # Log info of the whole epoch
+        total_time = time.time() - start_time
+        total_time_str = str(datetime.timedelta(seconds=int(total_time)))
+        msg = f"Validation done | time {total_time_str} | Averaged stats: " + str(metric_logger)
+        msg += '\n\n'
+        Log.info(msg)
+    
+        return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
 
     def finetune(self):
         Log.info("Start Finetuning")
         for epoch in range(self.args.epochs):
             self.train_one_epoch(epoch)
+
+            self.validation()
 
             if self.args.save_path and (epoch % self.args.save_freq == 0 or epoch + 1 == self.args.epochs):
                 save_model_noddp(

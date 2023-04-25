@@ -306,6 +306,20 @@ def adjust_learning_rate(optimizer, epoch, args):
             param_group["lr"] = lr
     return
 
+def adjust_learning_rate_ft(optimizer, epoch, args):
+    """Decay the learning rate with half-cycle cosine after warmup"""
+    if epoch < args.warmup_epochs:
+        lr = args.lr * epoch / args.warmup_epochs 
+    else:
+        lr = args.min_lr + (args.lr - args.min_lr) * 0.5 * \
+            (1. + math.cos(math.pi * (epoch - args.warmup_epochs) / (args.epochs - args.warmup_epochs)))
+    for param_group in optimizer.param_groups:
+        if "lr_scale" in param_group:
+            param_group["lr"] = lr * param_group["lr_scale"]
+        else:
+            param_group["lr"] = lr
+    return
+
 def load_model(args, model_without_ddp, optimizer, loss_scaler):
     if args.resume:
         if args.resume.startswith('https'):
@@ -358,14 +372,21 @@ def save_model(args, epoch, model, model_without_ddp, optimizer, loss_scaler):
         client_state = {'epoch': epoch}
         model.save_checkpoint(save_dir=args.output_dir, tag="checkpoint-%s" % epoch_name, client_state=client_state)
 
-def save_model_noddp(args, epoch, model, model_without_ddp, optimizer, loss_scaler):
+def save_model_noddp(args, epoch, model, optimizer, loss_scaler):
     output_dir = Path(args.save_path)
     epoch_name = str(epoch)
     if loss_scaler is not None:
         checkpoint_paths = [output_dir / ('checkpoint-%s.pth' % epoch_name)]
+        # don't save encoder weight
+        weight = {}
+        model_dic = model.state_dict()
+        for key in model_dic.keys():
+            if key[:3] != 'enc':
+                weight[key] = model_dic[key]
+
         for checkpoint_path in checkpoint_paths:
             to_save = {
-                'model': model.state_dict(),
+                'model': weight,
                 'optimizer': optimizer.state_dict(),
                 'epoch': epoch,
                 'scaler': loss_scaler.state_dict(),
@@ -679,6 +700,7 @@ class MetricLogger(object):
         Log.info('{} Total time: {} ({:.4f} s / it)'.format(
             header, total_time_str, total_time / len(iterable)))
 
+
 # ============
 # === Mine ===
 # ============
@@ -712,17 +734,25 @@ def add_weight_decay(model, freeze_enc, scale=0.1, weight_decay=1e-5, skip_list=
             {'params': enc_weight, 'weight_decay': weight_decay, "lr_scale": scale}]
 
 
-def add_weight_decay_ft(model, scale=0.05, weight_decay=1e-5, skip_list=()):
+def add_weight_decay_ft(model, translator_ft, scale=0.08, weight_decay=1e-5, skip_list=()):
     decay = []
     no_decay = []
     module_weight = []
+    if translator_ft:
+        translator = []
     for name, param in model.named_parameters():
-        # deal with encoder parameters
+        # froze encoder weight   # froze translator weight
         if name[:3] == 'enc':
-            continue  # frozen weights
+            continue
+        elif name[:10] == 'translator':
+            if not translator_ft:
+                    continue
+            else:
+                translator.append(param)
+            
         # translator and decoder parameters
         # ['shrink', 'shrink_linear', 'translator', 'expand_linear']
-        elif name[:6] in ['shrink', 'shrink', 'transl', 'expand']:
+        elif name[:6] in ['shrink', 'shrink', 'expand']:  # , 'transl'
             module_weight.append(param)
         else:
             if len(param.shape) == 1 or name.endswith(".bias") or name in skip_list:
@@ -730,15 +760,17 @@ def add_weight_decay_ft(model, scale=0.05, weight_decay=1e-5, skip_list=()):
             else:
                 decay.append(param)
 
-    # if freeze_enc:
-    #     return [
-    #         {'params': no_decay, 'weight_decay': 0.},
-    #         {'params': decay, 'weight_decay': weight_decay}]
-    # else:
-    return [
+    if translator_ft:
+        return [
         {'params': no_decay, 'weight_decay': 0.},
         {'params': decay, 'weight_decay': weight_decay},
-        {'params': module_weight, 'weight_decay': weight_decay, "lr_scale": scale}]
+        {'params': module_weight, 'weight_decay': weight_decay, "lr_scale": scale},
+        {'params': translator, 'weight_decay': weight_decay, "lr_scale": scale*0.5}]
+    else:
+        return [
+            {'params': no_decay, 'weight_decay': 0.},
+            {'params': decay, 'weight_decay': weight_decay},
+            {'params': module_weight, 'weight_decay': weight_decay, "lr_scale": scale}]
 
 
 def intersectionAndUnionGPU(

@@ -13,7 +13,7 @@ from models.modules import trunc_normal_
 from models.vit import Translator, vit_base_patch16
 
 from models.hrnet.hrnet import HRNet_W48
-# from models.pspnet.pspnet import PSPNet
+from models.pspnet.pspnet import PSPNet
 
 
 class BasicConv2d(nn.Module):
@@ -125,18 +125,37 @@ class Segmenter(nn.Module):
         # expand
         self.expand_linear = nn.Linear(trans_embed, 14*14*shrink_embed)
 
-        # decoder for the first 11 frames' embedding
-        self.f11_dec = Decoder(shrink_embed, 256, dec_blocks, spatio_kernel=5)
-        # decoder for the second 11 frames' embedding
-        self.s11_dec = Decoder(shrink_embed, 256, dec_blocks, spatio_kernel=5)
-
         if args.seghead == 'hrnet48':
+            # decoder for the first 11 frames' embedding
+            self.f11_dec = Decoder(shrink_embed, 256, dec_blocks, spatio_kernel=5)
+            # decoder for the second 11 frames' embedding
+            self.s11_dec = Decoder(shrink_embed, 256, dec_blocks, spatio_kernel=5)
+
             self.seghead = HRNet_W48(args)  # input:  [B, 256, 56, 56]
 
         elif args.seghead == 'pspnet':
-            self.seghead = PSPNet(args)   # input: TBD
+            # decoder for the first 11 frames' embedding
+            self.f11_dec = Decoder(shrink_embed, 2048, dec_blocks, spatio_kernel=5)
+            # decoder for the second 11 frames' embedding
+            self.s11_dec = Decoder(shrink_embed, 2048, dec_blocks, spatio_kernel=5)
+            
+            self.seghead = PSPNet(args)   # input: [B, 2048, 56, 56]
 
-        self.apply(self._init_weights)
+        # initialize
+        # [self.shrink, self.proj_catmsk, self.shrink_linear, self.translator, self.expand_linear, self.f11_dec, self.s11_dec, self.seghead]
+        for modules in [self.proj_catmsk, self.f11_dec, self.s11_dec, self.seghead]:
+            for m in modules.modules():
+                if isinstance(m, nn.Linear):
+                    trunc_normal_(m.weight, std=.02)
+                    if isinstance(m, nn.Linear) and m.bias is not None:
+                        nn.init.constant_(m.bias, 0)
+                elif isinstance(m, nn.LayerNorm):
+                    nn.init.constant_(m.bias, 0)
+                    nn.init.constant_(m.weight, 1.0)
+                elif isinstance(m, nn.Conv2d):
+                    nn.init.kaiming_normal_(m.weight.data)
+                    if m.bias is not None:
+                        m.bias.data.zero_()
 
 
     def forward_encoder(self, x):
@@ -194,7 +213,7 @@ class Segmenter(nn.Module):
         return x   # (B T), shrink_embed, 56, 56
 
 
-    def forward(self, x, catmask, label, skip=True):
+    def forward(self, x, catmask, label, skip=True, train=True):
         B, T, _, _, _ = x.shape
         # MAE encoder
         x = self.forward_encoder(x)
@@ -204,12 +223,15 @@ class Segmenter(nn.Module):
 
         x = self.forward_translator(x, T)
 
-        x = self.s11_forward_decoder(x, identity, skip=skip)     # (B T), shrink_embed, 56, 56
-        identity = self.f11_forward_decoder(identity)  # (B T), shrink_embed, 56, 56
+        x = self.s11_forward_decoder(x, identity, skip=skip)     # (B 11), shrink_embed, 56, 56
+        identity = self.f11_forward_decoder(identity)  # (B 11), shrink_embed, 56, 56
 
-        x = torch.cat((identity, x), dim=0)
+        x = torch.cat((identity, x), dim=0)   # (B 22), shrink_embed, 56, 56
 
-        x = self.seghead(x)  # (B T), 49, 56, 56
+        if not train:
+            return x
+
+        x = self.seghead(x)['seg']  # (B T), 49, 56, 56
         
         return self.forward_loss(x, label)
 
@@ -223,14 +245,15 @@ class Segmenter(nn.Module):
         return F.cross_entropy(x, label), x
     
 
-    def _init_weights(self, m):
-        if isinstance(m, nn.Linear):
-            trunc_normal_(m.weight, std=.02)
-            if isinstance(m, nn.Linear) and m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.LayerNorm):
-            nn.init.constant_(m.bias, 0)
-            nn.init.constant_(m.weight, 1.0)
-        # elif isinstance(m, nn.Conv2d):
-            # nn.init.kaiming_normal_(m.weight.data, a=0, mode='fan_in', nonlinearity='leaky_relu')
-        #     nn.init.constant_(m.bias, 0)   
+    # def _init_weights(self, m):
+    #     if isinstance(m, nn.Linear):
+    #         trunc_normal_(m.weight, std=.02)
+    #         if isinstance(m, nn.Linear) and m.bias is not None:
+    #             nn.init.constant_(m.bias, 0)
+    #     elif isinstance(m, nn.LayerNorm):
+    #         nn.init.constant_(m.bias, 0)
+    #         nn.init.constant_(m.weight, 1.0)
+    #     elif isinstance(m, nn.Conv2d):
+    #         nn.init.kaiming_normal_(m.weight.data)
+    #         if m.bias is not None:
+    #             m.bias.data.zero_()
