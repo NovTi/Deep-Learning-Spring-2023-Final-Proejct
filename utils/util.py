@@ -8,7 +8,9 @@ import shutil
 import pickle
 import datetime
 import numpy as np
+
 from pathlib import Path
+from typing import Tuple
 from torch._six import inf
 from collections import defaultdict, deque
 from typing import Callable, Iterable, List, TypeVar
@@ -79,7 +81,13 @@ class CfgNode(dict):
         num_layer: 9, warmup_epochs : 3, eff_batch_adjust: 11
         """
         msg = "\nUpdate: \n"
-        update_lst = self.exp_id.split("_")
+        if self.exp_name == 'predict_pretrain':
+            update_lst = self.exp_id.split('_')
+        elif self.exp_name == 'finetune':
+            # use weight folder to split: eg. results/predict_pretrain/ft_se64_te768_hd12_mp4_l9_w3_eff11/checkpoint...
+            update_lst = self.predict_weight.split('/')[-2].split('_')
+            # update_lst = self.exp_id.split('_')
+
         self.freeze_enc = 't' in update_lst[0][1:]
         msg += f"   freeze_enc: {self.freeze_enc}\n"
 
@@ -290,6 +298,7 @@ def adjust_learning_rate(optimizer, epoch, args):
     else:
         lr = args.min_lr + (args.lr - args.min_lr) * 0.5 * \
             (1. + math.cos(math.pi * (epoch - args.warmup_epochs) / (args.epochs - args.warmup_epochs)))
+    lr = lr * 0.01
     for param_group in optimizer.param_groups:
         if "lr_scale" in param_group:
             param_group["lr"] = lr * param_group["lr_scale"]
@@ -313,6 +322,22 @@ def load_model(args, model_without_ddp, optimizer, loss_scaler):
                 loss_scaler.load_state_dict(checkpoint['scaler'])
             Log.info("With optim & sched!")
 
+def load_model_noddp(args, model, optimizer, loss_scaler):
+    if args.resume:
+        if args.resume.startswith('https'):
+            checkpoint = torch.hub.load_state_dict_from_url(
+                args.resume, map_location='cpu', check_hash=True)
+        else:
+            checkpoint = torch.load(args.resume, map_location='cpu')
+        model.load_state_dict(checkpoint['model'])
+        Log.info("Resume checkpoint %s" % args.resume)
+        if 'optimizer' in checkpoint and 'epoch' in checkpoint and not (hasattr(args, 'eval') and args.eval):
+            optimizer.load_state_dict(checkpoint['optimizer'])
+            args.start_epoch = checkpoint['epoch'] + 1
+            if 'scaler' in checkpoint:
+                loss_scaler.load_state_dict(checkpoint['scaler'])
+            Log.info("With optim & sched!")
+
 def save_model(args, epoch, model, model_without_ddp, optimizer, loss_scaler):
     output_dir = Path(args.save_path)
     epoch_name = str(epoch)
@@ -320,7 +345,26 @@ def save_model(args, epoch, model, model_without_ddp, optimizer, loss_scaler):
         checkpoint_paths = [output_dir / ('checkpoint-%s.pth' % epoch_name)]
         for checkpoint_path in checkpoint_paths:
             to_save = {
-                # 'model': model_without_ddp.state_dict(),
+                'model': model_without_ddp.state_dict(),
+                # 'model': model.state_dict(),
+                'optimizer': optimizer.state_dict(),
+                'epoch': epoch,
+                'scaler': loss_scaler.state_dict(),
+                'args': args,
+            }
+
+            save_on_master(to_save, checkpoint_path)
+    else:
+        client_state = {'epoch': epoch}
+        model.save_checkpoint(save_dir=args.output_dir, tag="checkpoint-%s" % epoch_name, client_state=client_state)
+
+def save_model_noddp(args, epoch, model, model_without_ddp, optimizer, loss_scaler):
+    output_dir = Path(args.save_path)
+    epoch_name = str(epoch)
+    if loss_scaler is not None:
+        checkpoint_paths = [output_dir / ('checkpoint-%s.pth' % epoch_name)]
+        for checkpoint_path in checkpoint_paths:
+            to_save = {
                 'model': model.state_dict(),
                 'optimizer': optimizer.state_dict(),
                 'epoch': epoch,
@@ -639,7 +683,7 @@ class MetricLogger(object):
 # === Mine ===
 # ============
 
-def add_weight_decay(model, freeze_enc, scale, weight_decay=1e-5, skip_list=()):
+def add_weight_decay(model, freeze_enc, scale=0.1, weight_decay=1e-5, skip_list=()):
     decay = []
     no_decay = []
     enc_weight = []
@@ -666,6 +710,66 @@ def add_weight_decay(model, freeze_enc, scale, weight_decay=1e-5, skip_list=()):
             {'params': no_decay, 'weight_decay': 0.},
             {'params': decay, 'weight_decay': weight_decay},
             {'params': enc_weight, 'weight_decay': weight_decay, "lr_scale": scale}]
+
+
+def add_weight_decay_ft(model, scale=0.05, weight_decay=1e-5, skip_list=()):
+    decay = []
+    no_decay = []
+    module_weight = []
+    for name, param in model.named_parameters():
+        # deal with encoder parameters
+        if name[:3] == 'enc':
+            continue  # frozen weights
+        # translator and decoder parameters
+        # ['shrink', 'shrink_linear', 'translator', 'expand_linear']
+        elif name[:6] in ['shrink', 'shrink', 'transl', 'expand']:
+            module_weight.append(param)
+        else:
+            if len(param.shape) == 1 or name.endswith(".bias") or name in skip_list:
+                no_decay.append(param)
+            else:
+                decay.append(param)
+
+    # if freeze_enc:
+    #     return [
+    #         {'params': no_decay, 'weight_decay': 0.},
+    #         {'params': decay, 'weight_decay': weight_decay}]
+    # else:
+    return [
+        {'params': no_decay, 'weight_decay': 0.},
+        {'params': decay, 'weight_decay': weight_decay},
+        {'params': module_weight, 'weight_decay': weight_decay, "lr_scale": scale}]
+
+
+def intersectionAndUnionGPU(
+        preds: torch.tensor,
+        target: torch.tensor,
+        num_classes: int,
+        ignore_index=255
+) -> Tuple[torch.tensor, torch.tensor, torch.tensor]:
+    """
+    inputs:
+        preds : shape [H, W]
+        target : shape [H, W]
+        num_classes : Number of classes
+
+    returns :
+        area_intersection : shape [num_class]
+        area_union : shape [num_class]
+        area_target : shape [num_class]
+    """
+    assert (preds.dim() in [1, 2, 3])
+    assert preds.shape == target.shape
+    preds = preds.view(-1)
+    target = target.view(-1)
+    preds[target == ignore_index] = ignore_index
+    intersection = preds[preds == target]
+    area_intersection = torch.histc(intersection.float(), bins=num_classes, min=0, max=num_classes-1)
+    area_output = torch.histc(preds.float(), bins=num_classes, min=0, max=num_classes-1)
+    area_target = torch.histc(target.float(), bins=num_classes, min=0, max=num_classes-1)
+    area_union = area_output + area_target - area_intersection
+    # print(torch.unique(intersection))
+    return area_intersection, area_union, area_target
 
 
 def ensure_path(path):

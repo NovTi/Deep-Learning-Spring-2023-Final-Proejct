@@ -192,50 +192,100 @@ class VMAEUnlabeledDataset(torch.utils.data.Dataset):
 
 
 class TrainDatset(torch.utils.data.Dataset):
-    def __init__(self, args, transforms=None):
+    def __init__(self, args):
         # "../../../dataset/dl/"
-        self.image_dir = args.root
+        self.args = args
 
-        self.transforms = transforms
         # create the video list, each contains 22 frames
-        self.video_lst = [f"train/video_{i//2}" for i in range(2000)]
-        # 0: use first 11 images to predict 12-22 masks
-        # 1: use 12-22 images to predict frist 11 masks
-        self.index_lst = [i%2 for i in range(2000)]
+        self.video_lst = [f"train/video_{i}" for i in range(1000)]
+
+        self.resize = transforms.Resize((args.input_size, args.input_size))
+        self.resize_catmsk = transforms.Resize((14, 14))
+        self.transform = transforms.Compose([
+            Stack(p=self.args.reverse),
+            transforms.ToTensor(),
+            RandomHorizontalFlip(p=self.args.flip),
+            GroupNormalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),  # use imagenet default mean/std
+            Rearrange("(t c) h w -> t c h w", t=11)
+        ])
 
     def __len__(self):
-        return len(self.folder_lst)
+        return len(self.video_lst)
 
     def __getitem__(self, idx):
-        # select which video
-        video = os.path.join(self.image_dir, self.folder_lst[idx])
-        half = self.index_ls[idx]
-        if half == 0: # first half
-            pass
+        # root: ../../../dataset/dl
+        # process mask, convert to binary representation, convert to tensor, resize
+        mask = np.load(os.path.join(self.args.root, f'{self.video_lst[idx]}/processed_mask.npy'))
+        mask = torch.from_numpy(mask)  # [22, 49, 160, 240]
+        catmask = self.resize_catmsk(mask[:11])  # [22, 49, 14, 14]
+        mask = self.resize(mask)  # [22, 49, 224, 224]
+
+        # process images
+        img_lst = [
+            self.resize(Image.open(os.path.join(self.args.root, f'{self.video_lst[idx]}/image_{i}.png')).convert('RGB')) for i in range(11)
+        ]
+
+        img_lst = self.transform(img_lst)  # [11, 3, 224, 224]
+
+        return (img_lst, mask, catmask)
+
+    # def _process_mask(self, mask):
+    #     # convert mask to binary representation of num_cls channels
+    #     # mask.shape: [num_frames, h, w]
+    #     num_frames, h, w = mask.shape
+
+    #     # # remove the error pixels
+    #     # uni_label, count = np.unique(mask, return_counts=True)
+
+    #     new_mask = np.zeros((num_frames, self.args.num_cls, h, w))
+    #     for f in range(num_frames):
+    #         # total cls num is 49
+    #         for c in range(self.args.num_cls):
+    #             new_mask[f][c][np.where(mask[f] == c)] = 1
+    #     return new_mask
 
 
 class ValDatset(torch.utils.data.Dataset):
-    def __init__(self, args, transforms=None):
+    def __init__(self, args):
         # "../../../dataset/dl/"
-        self.image_dir = args.root
-        self.transforms = transforms
+        self.args = args
+
         # create the video list, each contains 22 frames
-        self.video_lst = [f"val/video_{i//2+1000}" for i in range(2000)]
-        # 0: use first 11 images to predict 12-22 masks
-        # 1: use 12-22 images to predict frist 11 masks
-        self.index_lst = [i%2 for i in range(2000)]
+        self.video_lst = [f"val/video_{i+1000}" for i in range(1000)]
+
+        self.resize = transforms.Resize((args.input_size, args.input_size))
+        self.resize_catmsk = transforms.Resize((14, 14))
+        self.transform = transforms.Compose([
+            Stack(p=self.args.reverse),
+            transforms.ToTensor(),
+            RandomHorizontalFlip(p=self.args.flip),
+            GroupNormalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),  # use imagenet default mean/std
+            Rearrange("(t c) h w -> t c h w", t=11)
+        ])
 
     def __len__(self):
-        return len(self.folder_lst)
+        return len(self.video_lst)
 
     def __getitem__(self, idx):
-        video = os.path.join(self.image_dir, self.folder_lst[idx])
-        half = self.index_ls[idx]
-        return None
+        # root: ../../../dataset/dl
+        # process mask, convert to binary representation, convert to tensor, resize
+        mask = np.load(os.path.join(self.args.root, f'{self.video_lst[idx]}/processed_mask.npy'))
+        mask = torch.from_numpy(mask)  # [22, 49, 160, 240]
+        catmask = self.resize_catmsk(mask[:11])  # [22, 49, 14, 14]
+        mask = self.resize(mask)  # [22, 49, 224, 224]
+
+        # process images
+        img_lst = [
+            self.resize(Image.open(os.path.join(self.args.root, f'{self.video_lst[idx]}/image_{i}.png')).convert('RGB')) for i in range(11)
+        ]
+
+        img_lst = self.transform(img_lst)  # [11, 3, 224, 224]
+
+        return (img_lst, mask, catmask)
 
 
-# if __name__ == "__main__":
-    # dataset = UnlabeledDataset('../../../dataset/dl/unlabeled', None)
+if __name__ == "__main__":
+    dataset = UnlabeledDataset('../../../dataset/dl/unlabeled', None)
 
 
     

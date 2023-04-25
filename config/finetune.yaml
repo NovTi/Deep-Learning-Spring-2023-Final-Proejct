@@ -1,0 +1,57 @@
+TRAIN:
+  batch_size: 2
+  epochs: 300
+  accum_iter: 2
+  log_freq: 10  # log information every 100 iterations
+  save_freq: 5
+  opt: AdamW  # sgd or adamw
+
+MODLE:
+  model: segmenter
+  height: 160
+  width: 240
+  input_size: 224
+  norm_pix_loss: False
+  skip: True
+  enc_weight: results/mae_pretrain/resume00/checkpoint-199.pth
+  predict_weight: results/predict_pretrain/ft_se64_te768_hd12_mp4_l9_w3_eff11/checkpoint-199.pth
+  translator_weight: results/predict_pretrain/ft_se64_te768_hd12_mp4_l9_w3_eff11/translator.pth
+  enc_dim: 768   # encoder
+  shrink_embed: 128   # shrink channel from 768 to 32 fro saving computation
+  trans_embed: 768  # translator
+  num_heads: 12  # translator
+  mlp_ratio: 4  # translator
+  num_layers: 9  # translator
+  dropout: 0.0  # translator
+  dec_blocks: 2  # decoder
+  freeze_enc: True 
+  bn_type: torchbn
+  seghead: hrnet48
+
+OPT:
+  weight_decay: 0.005
+  momentum: 0.9
+  nesterov: True
+  lr:
+  blr: 0.0008  # 0.00015
+  min_lr: 1e-08
+  warmup_epochs: 3
+  eff_batch_adjust: 11  # equal to adjusting learning rate
+
+DATA:
+  output_dir: results
+  num_frames: 11
+  device: cuda
+  seed: 0
+  resume: ''
+  start_epoch: 0
+  root: ../../../dataset/dl/
+  num_cls: 49  # 48 + 1 (background)
+
+AUG:
+  flip: 0.5
+  reverse: 0.05
+
+DIST:
+  num_workers: 2
+  pin_mem: True

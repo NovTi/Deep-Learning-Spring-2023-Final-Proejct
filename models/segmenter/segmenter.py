@@ -1,3 +1,5 @@
+# Final Model for Video Segmentation
+
 import pdb
 import math
 import torch
@@ -9,6 +11,9 @@ from einops.layers.torch import Rearrange
 
 from models.modules import trunc_normal_
 from models.vit import Translator, vit_base_patch16
+
+from models.hrnet.hrnet import HRNet_W48
+# from models.pspnet.pspnet import PSPNet
 
 
 class BasicConv2d(nn.Module):
@@ -74,38 +79,12 @@ class ConvSC(nn.Module):
         return y
 
 
-def sampling_generator(N, reverse=False):
-    samplings = [False, True] * (N // 2)
-    if reverse: return list(reversed(samplings[:N]))
-    else: return samplings[:N]
-
-
-class Encoder(nn.Module):
-    """3D Encoder for SimVP"""
-
-    def __init__(self, C_in, C_hid, block_num, spatio_kernel):
-        samplings = [False]
-        samplings.extend([True for i in range(block_num-1)])
-        super(Encoder, self).__init__()
-        self.enc = nn.Sequential(
-              ConvSC( C_in, C_hid, spatio_kernel, downsampling=samplings[0]),
-            *[ConvSC(C_hid, C_hid, spatio_kernel, downsampling=s) for s in samplings[1:]]
-        )
-
-    def forward(self, x):  # B*4, 3, 128, 128
-        enc1 = self.enc[0](x)
-        latent = enc1
-        for i in range(1, len(self.enc)):
-            latent = self.enc[i](latent)
-        return latent, enc1
-
-
 class Decoder(nn.Module):
     """3D Decoder for SimVP"""
 
     def __init__(self, C_hid, C_out, block_num, spatio_kernel):
-        samplings = [False]
-        samplings.extend([True for i in range(block_num-1)])
+        samplings = []
+        samplings.extend([True for i in range(block_num)])
         super(Decoder, self).__init__()
         self.dec = []
         for i in range(block_num):
@@ -121,15 +100,10 @@ class Decoder(nn.Module):
         return x
 
 
-# convolution vit video prediction
-class CViT_VP(nn.Module):
-    def __init__(self, img_size=224, seq_len=11, enc_dim=768, shrink_embed=32,
-                trans_embed=192, num_heads=12, mlp_ratio=4, num_layers=9, dec_blocks=3, drop=0.0, device='cuda'):
-        super(CViT_VP, self).__init__()
-        """
-        input shape: B, T, C, H, W
-            B: batch size  T: number of framess
-        """
+class Segmenter(nn.Module):
+    def __init__(self, args, img_size=224, seq_len=11, enc_dim=768, shrink_embed=32,
+                trans_embed=192, num_heads=12, mlp_ratio=4, num_layers=9, dec_blocks=2, drop=0.0, device='cuda'):
+        super(Segmenter, self).__init__()
         
         self.enc = vit_base_patch16(
             img_size=img_size,
@@ -139,6 +113,10 @@ class CViT_VP(nn.Module):
 
         # shrink the embedding dimension to save computation in ViT
         self.shrink = nn.Conv2d(enc_dim, shrink_embed, kernel_size=1, stride=1)
+        
+        # project the features that concat mask back to shrink embed
+        self.proj_catmsk = nn.Conv2d(args.num_cls+shrink_embed, shrink_embed, kernel_size=1, stride=1)
+
         # nn.Conv2d(enc_dim, shrink_embed, kernel_size=5, stride=2)
         self.shrink_linear = nn.Linear(14*14*shrink_embed, trans_embed)
 
@@ -146,11 +124,20 @@ class CViT_VP(nn.Module):
 
         # expand
         self.expand_linear = nn.Linear(trans_embed, 14*14*shrink_embed)
-        # self.expand = nn.Conv2d(shrink_embed, 64, kernel_size=1, stride=1)
 
-        self.dec = Decoder(shrink_embed, 3, dec_blocks, spatio_kernel=5)
+        # decoder for the first 11 frames' embedding
+        self.f11_dec = Decoder(shrink_embed, 256, dec_blocks, spatio_kernel=5)
+        # decoder for the second 11 frames' embedding
+        self.s11_dec = Decoder(shrink_embed, 256, dec_blocks, spatio_kernel=5)
 
-        self.criterion = nn.MSELoss()
+        if args.seghead == 'hrnet48':
+            self.seghead = HRNet_W48(args)  # input:  [B, 256, 56, 56]
+
+        elif args.seghead == 'pspnet':
+            self.seghead = PSPNet(args)   # input: TBD
+
+        self.apply(self._init_weights)
+
 
     def forward_encoder(self, x):
         # x.shape: B, T, C, H, W   B, 11, 3, 224, 224
@@ -166,8 +153,18 @@ class CViT_VP(nn.Module):
         
         return x
 
+
+    def concate_mask(self, x, catmask):
+        # x.shape: (B T), shrink_embed, 14, 14
+        # catmask: B, 11, num_cls, 14, 14   11 because only has first 11 frames' mask
+        catmask = rearrange(catmask, 'b t c h w -> (b t) c h w')
+        x = torch.cat((x, catmask), dim=1) # (B T), shrink_embed+num_cls, 14, 14
+        x = self.proj_catmsk(x)  # (B T), shrink_embed, 14, 14
+        return x
+
+
     def forward_translator(self, x, T):
-        _, d, h, _ = x.shape
+        _, d, h, _ = x.shape # (B T), shrink_embed, 14, 14
 
         x = rearrange(x, '(b t) d h w -> b t (d h w)', t=T) # B, T, 14*14*shrink_embed
         x = self.shrink_linear(x)  # B, T, trans_embed
@@ -178,41 +175,62 @@ class CViT_VP(nn.Module):
         x = rearrange(x, 'b t (d h w) -> (b t) d h w', d=d, h=h) # (B T), shrink_embed, 14, 14
         # x = self.expand(x)  # (B T), 128, 14, 14
         return x
-    
-    def forward_decoder(self, x, B, identity, skip=False):
+
+    # first 11 frames' decoder
+    def f11_forward_decoder(self, x):
+        # predict the frames
+        x = self.f11_dec(x)
+        
+        return x   # (B T), shrink_embed, 56, 56
+
+    # sceond 11 frames' decoder
+    def s11_forward_decoder(self, x, identity, skip=False):
         # predict the frames
         if skip:
-            x = self.dec(x + identity)
+            x = self.s11_dec(x + identity)
         else:
-            x = self.dec(x)
-        # (B T), shrink_embed, 14, 14
-        x = rearrange(x, '(b t) c h w -> b t c h w', b=B) # x.reshape(B, 11, 3, 224, 224)
+            x = self.s11_dec(x)
+        
+        return x   # (B T), shrink_embed, 56, 56
 
-        return x
 
-    def forward(self, x, y, skip=False):
-        B, T, C, H, W = x.shape
+    def forward(self, x, catmask, label, skip=True):
+        B, T, _, _, _ = x.shape
         # MAE encoder
         x = self.forward_encoder(x)
-        identity = x
+
+        x = self.concate_mask(x, catmask)
+        identity = x   # frist 11 frames' embedding
+
         x = self.forward_translator(x, T)
-        x = self.forward_decoder(x, B, identity, skip=skip)
-        loss = self.forward_loss(x, y, B)
 
-        return loss
+        x = self.s11_forward_decoder(x, identity, skip=skip)     # (B T), shrink_embed, 56, 56
+        identity = self.f11_forward_decoder(identity)  # (B T), shrink_embed, 56, 56
 
-    def forward_loss(self, x, label, B, norm_pix_loss=False):
-        x = rearrange(x, 'b t c h w -> (b t) c h w')
-        pred = F.interpolate(x, size=label.shape[-1], mode='bilinear', align_corners=True)
-        pred = rearrange(pred, '(b t) c h w -> b t c h w', b=B)
+        x = torch.cat((identity, x), dim=0)
 
-        return self.criterion(pred, label)
+        x = self.seghead(x)  # (B T), 49, 56, 56
         
+        return self.forward_loss(x, label)
 
 
-# if __name__ == '__main__':
-#     # note: trans_embed must be divisible by num_heads
-#     test = CViT_VP(224, seq_len=11, enc_dim=768, shrink_embed=32, trans_embed=192,
-#                     num_heads=12, mlp_ratio=2, num_layers=9, dec_blocks=4, drop=0.0)
-#     a = torch.rand(4, 11, 3, 224, 224)
-#     test(a)
+    def forward_loss(self, x, label):
+        label = rearrange(label, 'b t c h w -> (b t) c h w')
+        # x: (B T), 49, 56, 56
+        x = F.interpolate(x, size=label.shape[-1], mode='bilinear', align_corners=True)
+        # x: (B T), 49, 224, 224
+
+        return F.cross_entropy(x, label), x
+    
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            trunc_normal_(m.weight, std=.02)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+        # elif isinstance(m, nn.Conv2d):
+            # nn.init.kaiming_normal_(m.weight.data, a=0, mode='fan_in', nonlinearity='leaky_relu')
+        #     nn.init.constant_(m.bias, 0)   

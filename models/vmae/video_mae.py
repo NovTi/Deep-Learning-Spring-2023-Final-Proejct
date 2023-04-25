@@ -4,11 +4,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
+
 from functools import partial
 
 from timm.models.layers import trunc_normal_ as __call_trunc_normal_
 
-from models.video_mae_modules import Block, _cfg, PatchEmbed, get_sinusoid_encoding_table
+from models.vmae.video_mae_modules import Block, _cfg, PatchEmbed, get_sinusoid_encoding_table
 
 
 def trunc_normal_(tensor, mean=0., std=1.):

@@ -1,8 +1,8 @@
 TRAIN:
-  batch_size: 256
-  epochs: 200
-  accum_iter: 2
-  log_freq: 100  # log information every 100 iterations
+  batch_size: 128
+  epochs: 400
+  accum_iter: 4
+  log_freq: 200  # log information every 100 iterations
 
 MODLE:
   model: mae_vit_base_patch16
@@ -23,12 +23,12 @@ DATA:
   output_dir: results
   device: cuda
   seed: 0
-  resume: 'results/2023-04-12:pretrain-day1/resize-wscale-work8/checkpoint-120.pth'
+  resume: 'results/mae_pretrain/resume00/checkpoint-199.pth'
   start_epoch: 0
   root: ../../../dataset/dl/
   list_path: list/unlabeled.txt
   flip: 0.0
 
 DIST:
-  num_workers: 8
+  num_workers: 10
   pin_mem: True
