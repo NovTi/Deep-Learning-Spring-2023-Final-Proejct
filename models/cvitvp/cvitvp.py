@@ -98,7 +98,7 @@ class Decoder(nn.Module):
 # convolution vit video prediction
 class CViT_VP(nn.Module):
     def __init__(self, img_size=224, seq_len=11, enc_dim=768, shrink_embed=32,
-                trans_embed=192, num_heads=12, mlp_ratio=4, num_layers=9, dec_blocks=3, drop=0.0, device='cuda'):
+                trans_embed=192, num_heads=12, mlp_ratio=4, num_layers=9, dec_blocks=3, drop=0.0, device='cuda', learn_pos_embed=True):
         super(CViT_VP, self).__init__()
         """
         input shape: B, T, C, H, W
@@ -116,7 +116,7 @@ class CViT_VP(nn.Module):
         # nn.Conv2d(enc_dim, shrink_embed, kernel_size=5, stride=2)
         self.shrink_linear = nn.Linear(14*14*shrink_embed, trans_embed)
 
-        self.translator = Translator(seq_len, trans_embed, num_heads, mlp_ratio*trans_embed, num_layers, drop, device)
+        self.translator = Translator(seq_len, trans_embed, num_heads, mlp_ratio*trans_embed, num_layers, drop, device, learn_pos_embed)
 
         # expand
         self.expand_linear = nn.Linear(trans_embed, 14*14*shrink_embed)
@@ -125,6 +125,20 @@ class CViT_VP(nn.Module):
         self.dec = Decoder(shrink_embed, 3, dec_blocks, spatio_kernel=5)
 
         self.criterion = nn.MSELoss()
+
+        for modules in [self.shrink, self.shrink_linear, self.translator, self.expand_linear, self.dec]:
+            for m in modules.modules():
+                if isinstance(m, nn.Linear):
+                    trunc_normal_(m.weight, std=.02)
+                    if isinstance(m, nn.Linear) and m.bias is not None:
+                        nn.init.constant_(m.bias, 0)
+                elif isinstance(m, nn.LayerNorm):
+                    nn.init.constant_(m.bias, 0)
+                    nn.init.constant_(m.weight, 1.0)
+                elif isinstance(m, nn.Conv2d):
+                    nn.init.kaiming_normal_(m.weight.data)
+                    if m.bias is not None:
+                        m.bias.data.zero_()
 
     def forward_encoder(self, x):
         # x.shape: B, T, C, H, W   B, 11, 3, 224, 224
@@ -182,11 +196,3 @@ class CViT_VP(nn.Module):
 
         return self.criterion(pred, label)
         
-
-
-# if __name__ == '__main__':
-#     # note: trans_embed must be divisible by num_heads
-#     test = CViT_VP(224, seq_len=11, enc_dim=768, shrink_embed=32, trans_embed=192,
-#                     num_heads=12, mlp_ratio=2, num_layers=9, dec_blocks=4, drop=0.0)
-#     a = torch.rand(4, 11, 3, 224, 224)
-#     test(a)

@@ -80,7 +80,8 @@ class Pretrainer(object):
             num_heads=self.args.num_heads,
             mlp_ratio=self.args.mlp_ratio,
             num_layers=self.args.num_layers,
-            device=self.args.device)
+            device=self.args.device,
+            learn_pos_embed=self.args.learn_pos_embed)
         # load the MAE encoder weight
         self._load_weight()
 
@@ -222,11 +223,6 @@ if __name__ == "__main__":
 
     # deal with the scienciftic num
     args.min_lr = 1e-08
-    # deal with skip
-    if 'skip' in args.exp_id:
-        args.skip = True
-    else:
-        args.skip = False
 
     save_path = f"./results/{datetime.date.today()}:{args.exp_name}/{args.exp_id}"
     # save_path = f"./results/{args.exp_name}/{args.exp_id}"

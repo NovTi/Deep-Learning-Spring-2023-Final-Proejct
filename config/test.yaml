@@ -1,12 +1,11 @@
 TRAIN:
-  batch_size: 2
-  epochs: 500
-  accum_iter: 4
+  batch_size: 10
+  epochs: 300
+  accum_iter: 0
   log_freq: 50  # log information every 100 iterations
-  val_log_freq: 200
-  save_freq: 5
   opt: AdamW  # sgd or adamw
-  val_freq: 5
+  test_log_freq: 10
+  test: True
 
 MODLE:
   model: segmenter
@@ -16,35 +15,40 @@ MODLE:
   norm_pix_loss: False
   skip: True
   enc_weight: results/mae_pretrain/resume00/checkpoint-199.pth
-  predict_weight: results/predict_pretrain/ft_se64_te768_hd12_mp4_l9_w3_eff11_l/checkpoint-199.pth
-  translator_weight: results/predict_pretrain/ft_se64_te768_hd12_mp4_l9_w3_eff11_l/translator.pth
+  predict_weight: results/predict_pretrain/ft_se64_te768_hd12_mp4_l9_w3_eff11/checkpoint-199.pth
+  segmenter_weight: results/finetune/15.pth
   enc_dim: 768   # encoder
-  shrink_embed: 64   # shrink channel from 768 to 32 fro saving computation
-  trans_embed: 384  # translator
-  num_heads: 8  # translator
+  shrink_embed: 128   # shrink channel from 768 to 32 fro saving computation
+  trans_embed: 768  # translator
+  num_heads: 12  # translator
   mlp_ratio: 4  # translator
-  num_layers: 6  # translator
+  num_layers: 9  # translator
   dropout: 0.0  # translator
   dec_blocks: 2  # decoder
   freeze_enc: True
-  learn_pos_embed: False
 
 SEGHEAD:
-  seghead: hrnet48
+  seghead: pspnet
   classifier:
   bn_type: torchbn
   proj_dim: 256
-  module_ft: True
-  scratch: True  # train translator from scratch
+  bottle_type: 2  # orginal one
+  bottle_conv: 3
+  cls_lr: 0.05
+  adapt_iters: 20
+  bottle_lr_time: 0.1
+  bottle_ft: False
+  translator_ft: True
+  step: 4  # 3-shot setting
 
 OPT:
   weight_decay: 0.005
   momentum: 0.9
   nesterov: True
   lr:
-  blr: 0.001  # 0.00015
+  blr: 0.002  # 0.00015
   min_lr: 1e-08
-  warmup_epochs: 5
+  warmup_epochs: 2
   eff_batch_adjust: 11  # equal to adjusting learning rate
 
 DATA:
@@ -62,5 +66,5 @@ AUG:
   reverse: 0.05
 
 DIST:
-  num_workers: 8
+  num_workers: 2
   pin_mem: True

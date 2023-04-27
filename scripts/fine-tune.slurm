@@ -5,7 +5,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=6
 #SBATCH --mem=80GB
-#SBATCH --time=30:00:00
+#SBATCH --time=25:00:00
 #SBATCH --gres=gpu
 #SBATCH --partition=a100_1,a100_2,v100,rtx8000
 
@@ -24,5 +24,5 @@ singularity exec --nv \
 ${sif_path} /bin/bash -c "
 source /ext3/env.sh
 cd /scratch/$USER/NYU/DL/AE-Seg
-python -m src.pretrain --config ${config_path} --exp_name ${exp_name} --exp_id ${exp_id}
+python -m src.finetune --config ${config_path} --exp_name ${exp_name} --exp_id ${exp_id}
 "

@@ -6,7 +6,7 @@ from tqdm import tqdm
 
 
 def save():
-    root = '../../../dataset/dl/'
+    root = '../dataset/dl/'
     # train
     for i in tqdm(range(1000)):
         mask_path = f"{root}train/video_{i}/refined_mask.npy"
@@ -109,62 +109,94 @@ def find(x, y, remove, mask):
 
 
 if __name__ == "__main__":
-    root = '../../../dataset/dl/'
+    root = '../dataset/dl/'
+    # root = '/dataset/'
 
-    save()
     # train video lst
-    # for i in tqdm(range(1000)):
-    #     mask_path = f"{root}train/video_{i}/mask.npy"
-    #     save_path = f"{root}train/video_{i}/refined_mask.npy"
+    for i in tqdm(range(1000)):
+        mask_path = f"{root}train/video_{i}/mask.npy"
+        save_path = f"{root}train/video_{i}/refined_mask.npy"
 
-    #     mask = np.load(mask_path)
+        mask = np.load(mask_path)
 
-    #     num_frames, h, w = mask.shape
+        num_frames, h, w = mask.shape
 
-    #     # remove the error pixels
-    #     uni_label, count = np.unique(mask, return_counts=True)
+        # remove the error pixels
+        uni_label, count = np.unique(mask, return_counts=True)
 
-    #     remove_labels1 = uni_label[np.where(count <= 600)]
-    #     remove_labels2 = uni_label[np.where(uni_label >= 49)]
-    #     remove = np.concatenate((remove_labels1, remove_labels2))
-    #     remove = np.unique(remove)
+        remove_labels1 = uni_label[np.where(count <= 600)]
+        remove_labels2 = uni_label[np.where(uni_label >= 49)]
+        remove = np.concatenate((remove_labels1, remove_labels2))
+        remove = np.unique(remove)
 
-    #     for label in remove:
-    #         location = np.where(mask==label)
-    #         for i in np.unique(location[0]):  # go through the frames
-    #             x, y = int(location[1][np.where(location[0]==i)].mean()), int(location[2][np.where(location[0]==i)].mean())
-    #             # 上下左右寻找
-    #             replace_label = find(x, y, remove, mask[i])
-    #             # replace
-    #             mask[i][np.where(mask[i]==label)] = replace_label
+        for label in remove:
+            location = np.where(mask==label)
+            for i in np.unique(location[0]):  # go through the frames
+                x, y = int(location[1][np.where(location[0]==i)].mean()), int(location[2][np.where(location[0]==i)].mean())
+                # 上下左右寻找
+                replace_label = find(x, y, remove, mask[i])
+                # replace
+                mask[i][np.where(mask[i]==label)] = replace_label
 
-    #     np.save(save_path, mask)
+        np.save(save_path, mask)
 
-    # # val list
-    # for i in tqdm(range(1000)):
-    #     mask_path = f"{root}val/video_{i+1000}/mask.npy"
-    #     save_path = f"{root}val/video_{i+1000}/refined_mask.npy"
+    # val list
+    for i in tqdm(range(1000)):
+        mask_path = f"{root}val/video_{i+1000}/mask.npy"
+        save_path = f"{root}val/video_{i+1000}/refined_mask.npy"
 
-    #     mask = np.load(mask_path)
+        mask = np.load(mask_path)
 
-    #     num_frames, h, w = mask.shape
+        num_frames, h, w = mask.shape
 
-    #     # remove the error pixels
-    #     uni_label, count = np.unique(mask, return_counts=True)
+        # remove the error pixels
+        uni_label, count = np.unique(mask, return_counts=True)
 
-    #     remove_labels1 = uni_label[np.where(count <= 600)]
-    #     remove_labels2 = uni_label[np.where(uni_label >= 49)]
-    #     remove = np.concatenate((remove_labels1, remove_labels2))
-    #     remove = np.unique(remove)
+        remove_labels1 = uni_label[np.where(count <= 600)]
+        remove_labels2 = uni_label[np.where(uni_label >= 49)]
+        remove = np.concatenate((remove_labels1, remove_labels2))
+        remove = np.unique(remove)
 
-    #     for label in remove:
-    #         location = np.where(mask==label)
-    #         for i in np.unique(location[0]):  # go through the frames
-    #             x, y = int(location[1][np.where(location[0]==i)].mean()), int(location[2][np.where(location[0]==i)].mean())
-    #             # 上下左右寻找
-    #             replace_label = find(x, y, remove, mask[i])
-    #             # replace
-    #             mask[i][np.where(mask[i]==label)] = replace_label
+        for label in remove:
+            location = np.where(mask==label)
+            for i in np.unique(location[0]):  # go through the frames
+                x, y = int(location[1][np.where(location[0]==i)].mean()), int(location[2][np.where(location[0]==i)].mean())
+                # 上下左右寻找
+                replace_label = find(x, y, remove, mask[i])
+                # replace
+                mask[i][np.where(mask[i]==label)] = replace_label
 
-    #     np.save(save_path, mask)
+        np.save(save_path, mask)
+
+    # test video lst
+    for i in tqdm(range(1000)):
+        mask_path = f"{root}train/video_{i}/mask.npy"
+        save_path = f"{root}train/video_{i}/refined_mask.npy"
+
+        mask = np.load(mask_path)
+
+        num_frames, h, w = mask.shape
+
+        # remove the error pixels
+        uni_label, count = np.unique(mask, return_counts=True)
+
+        remove_labels1 = uni_label[np.where(count <= 600)]
+        remove_labels2 = uni_label[np.where(uni_label >= 49)]
+        remove = np.concatenate((remove_labels1, remove_labels2))
+        remove = np.unique(remove)
+
+        for label in remove:
+            location = np.where(mask==label)
+            for i in np.unique(location[0]):  # go through the frames
+                x, y = int(location[1][np.where(location[0]==i)].mean()), int(location[2][np.where(location[0]==i)].mean())
+                # 上下左右寻找
+                replace_label = find(x, y, remove, mask[i])
+                # replace
+                mask[i][np.where(mask[i]==label)] = replace_label
+
+        np.save(save_path, mask)
+
+
+    # save()
+
 

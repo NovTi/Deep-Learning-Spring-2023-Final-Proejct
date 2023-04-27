@@ -1,6 +1,6 @@
 TRAIN:
   batch_size: 4
-  epochs: 200
+  epochs: 250
   accum_iter: 2
   log_freq: 200  # log information every 100 iterations
   save_freq: 5
@@ -13,7 +13,7 @@ MODLE:
   input_size: 224
   norm_pix_loss: False
   skip: True
-  enc_weight: 'results/mae_pretrain/resume00/checkpoint-199.pth'
+  enc_weight: 'results/2023-04-25:mae_pretrain_resume/ep400/checkpoint-285.pth'
   enc_dim: 768   # encoder
   shrink_embed: 32   # shrink channel from 768 to 32 fro saving computation
   trans_embed: 768  # translator
@@ -24,6 +24,7 @@ MODLE:
   dec_blocks: 3  # decoder
   freeze_enc: True  # freeze encoder
   enc_lr_scalar: 0.1  # decrease loss backwards to encoder
+  learn_pos_embed: True
 
 OPT:
   weight_decay: 0.005

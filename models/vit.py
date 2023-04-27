@@ -102,11 +102,44 @@ class VisionTransformer(timm.models.vision_transformer.VisionTransformer):
         return x
 
 
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, dropout, max_len=30):
+        super(PositionalEncoding, self).__init__()
+        self.dropout = nn.Dropout(p=dropout)
+        
+        """
+        Parameters:
+            d_model: dimension of input embeddings
+            dropout (you don't need to use this, already in forward()): nn.Dropout
+            max_len: maximum length of input
+        Set variable value:
+            pe: torch.tensor of size (max_len, d_model)
+            
+        """
+        pe = torch.zeros(max_len, d_model)  # max_len, d_model
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = 10000.0 ** (-(torch.arange(0, d_model, 2).float() / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+
+        # Do not modify this.
+        self.register_buffer("pe", pe)
+
+    def forward(self, x):
+        pe = self.pe.unsqueeze(0)
+        x = x + pe[:, : x.size(1)].requires_grad_(False)
+        return self.dropout(x)   
+
+
 class Translator(nn.Module):
-    def __init__(self, seq_len, embed_dim, num_heads, mlp_dim, num_layers, dropout, device):
+    def __init__(self, seq_len, embed_dim, num_heads, mlp_dim, num_layers, dropout, device, learn_pos_embed):
         super(Translator, self).__init__()
         # frist we try the learnable pos embedding
-        self.pos_embedding = nn.Parameter(torch.zeros(1, seq_len, embed_dim))
+        self.learn_pos_embed = learn_pos_embed
+        if learn_pos_embed:  # learnable pos embed
+            self.pos_embedding = nn.Parameter(torch.zeros(1, seq_len, embed_dim))
+        else: # not learnable pos embed
+            self.pos_embedding = PositionalEncoding(embed_dim, dropout)
         mask = generate_square_subsequent_mask(seq_len).to(device)
         layers = []
         for i in range(num_layers):
@@ -115,7 +148,10 @@ class Translator(nn.Module):
         self.apply(self._init_weights)
 
     def forward(self, x):
-        x = x + self.pos_embedding
+        if self.learn_pos_embed:
+            x = x + self.pos_embedding
+        else:
+            x = self.pos_embedding(x)
 
         return self.encode_blocks(x)
 
@@ -135,28 +171,3 @@ def vit_base_patch16(**kwargs):
         norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
     return model
 
-
-# if __name__ == '__main__':
-#     vit = vit_base_patch16(
-#         img_size=224,
-#         num_classes=10,
-#         drop_path_rate=0.1
-#     )
-
-#     checkpoint = torch.load('results/2023-04-12:pretrain-day1/resize-wscale-work8/checkpoint-110.pth', map_location='cpu')
-#     checkpoint_model = checkpoint['model']
-
-#     interpolate_pos_embed(vit, checkpoint_model)
-
-#     model_dict = vit.state_dict()
-
-#     for index, key in enumerate(model_dict.keys()):
-#         if model_dict[key].shape == checkpoint_model[key].shape:
-#             model_dict[key] = checkpoint_model[key]
-#         else:
-#             print( 'Pre-trained shape and model shape dismatch for {}'.format(key))
-
-#     msg = vit.load_state_dict(model_dict, strict=True)
-#     a = torch.rand(11, 3, 224, 224)
-#     b = vit(a)
-#     c =1

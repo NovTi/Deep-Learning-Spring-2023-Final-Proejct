@@ -81,36 +81,60 @@ class CfgNode(dict):
         num_layer: 9, warmup_epochs : 3, eff_batch_adjust: 11
         """
         msg = "\nUpdate: \n"
+
+        if self.exp_name == 'finetune':
+            update_lst = self.exp_id.split('_')  # sc_hr_ft    sc: scratch
+
+            self.scratch = (update_lst[0] == 'sc')
+            msg += f"   scratch: {self.scratch}\n"
+
+            if update_lst[1] == 'hr':
+                self.seghead = 'hrnet48'
+            else:
+                self.seghead = 'pspnet'
+            msg += f"   seghead: {self.seghead}\n"
+
+            # if not train from scratch, do we finetune the models, e.g. translator, shrink
+            self.module_ft = (update_lst[2] == 'ft')
+            msg += f"   module_ft: {self.module_ft}\n"
+
         if self.exp_name == 'predict_pretrain':
+            # ft_se64_te768_hd12_mp4_l9_w3_eff11_l
             update_lst = self.exp_id.split('_')
-        elif self.exp_name == 'finetune':
-            # use weight folder to split: eg. results/predict_pretrain/ft_se64_te768_hd12_mp4_l9_w3_eff11/checkpoint...
+        elif self.exp_name == 'finetune' or self.exp_name == 'test':
+            # use weight folder to split: eg. results/predict_pretrain/ft_se64_te768_hd12_mp4_l9_w3_eff11_l/checkpoint...
             update_lst = self.predict_weight.split('/')[-2].split('_')
-            # update_lst = self.exp_id.split('_')
 
-        self.freeze_enc = 't' in update_lst[0][1:]
-        msg += f"   freeze_enc: {self.freeze_enc}\n"
+        if not self.scratch:
+            self.freeze_enc = 't' in update_lst[0][1:]
+            msg += f"   freeze_enc: {self.freeze_enc}\n"
 
-        self.shrink_embed = int(update_lst[1][2:])
-        msg += f"   shrink_embed: {self.shrink_embed}\n"
+            self.shrink_embed = int(update_lst[1][2:])
+            msg += f"   shrink_embed: {self.shrink_embed}\n"
 
-        self.trans_embed = int(update_lst[2][2:])
-        msg += f"   trans_embed: {self.trans_embed}\n"
+            self.trans_embed = int(update_lst[2][2:])
+            msg += f"   trans_embed: {self.trans_embed}\n"
 
-        self.num_heads = int(update_lst[3][2:])
-        msg += f"   num_heads: {self.num_heads}\n"
+            self.num_heads = int(update_lst[3][2:])
+            msg += f"   num_heads: {self.num_heads}\n"
 
-        self.mlp_ratio = int(update_lst[4][2:])
-        msg += f"   mlp_ratio: {self.mlp_ratio}\n"
+            self.mlp_ratio = int(update_lst[4][2:])
+            msg += f"   mlp_ratio: {self.mlp_ratio}\n"
 
-        self.num_layers = int(update_lst[5][1:])
-        msg += f"   num_layers: {self.num_layers}\n"
+            self.num_layers = int(update_lst[5][1:])
+            msg += f"   num_layers: {self.num_layers}\n"
 
-        self.warmup_epochs = int(update_lst[6][1:])
-        msg += f"   warmup_epochs: {self.warmup_epochs}\n"
+            # do not change warm up epoch when finetuning and testing
+            if self.exp_name == 'predict_pretrain':
+                self.warmup_epochs = int(update_lst[6][1:])
+                msg += f"   warmup_epochs: {self.warmup_epochs}\n"
 
-        self.eff_batch_adjust = int(update_lst[7][3:])
-        msg += f"   eff_batch_adjust: {self.eff_batch_adjust}\n"
+            self.eff_batch_adjust = int(update_lst[7][3:])
+            msg += f"   eff_batch_adjust: {self.eff_batch_adjust}\n"
+
+            self.learn_pos_embed = (update_lst[8] == 'l')
+            msg += f"   learn_pos_embed: {self.learn_pos_embed}\n"
+
 
         Log.info(msg)
 
@@ -298,7 +322,6 @@ def adjust_learning_rate(optimizer, epoch, args):
     else:
         lr = args.min_lr + (args.lr - args.min_lr) * 0.5 * \
             (1. + math.cos(math.pi * (epoch - args.warmup_epochs) / (args.epochs - args.warmup_epochs)))
-    lr = lr * 0.01
     for param_group in optimizer.param_groups:
         if "lr_scale" in param_group:
             param_group["lr"] = lr * param_group["lr_scale"]
@@ -359,8 +382,8 @@ def save_model(args, epoch, model, model_without_ddp, optimizer, loss_scaler):
         checkpoint_paths = [output_dir / ('checkpoint-%s.pth' % epoch_name)]
         for checkpoint_path in checkpoint_paths:
             to_save = {
-                'model': model_without_ddp.state_dict(),
-                # 'model': model.state_dict(),
+                # 'model': model_without_ddp.state_dict(),
+                'model': model.state_dict(),
                 'optimizer': optimizer.state_dict(),
                 'epoch': epoch,
                 'scaler': loss_scaler.state_dict(),
@@ -372,11 +395,11 @@ def save_model(args, epoch, model, model_without_ddp, optimizer, loss_scaler):
         client_state = {'epoch': epoch}
         model.save_checkpoint(save_dir=args.output_dir, tag="checkpoint-%s" % epoch_name, client_state=client_state)
 
-def save_model_noddp(args, epoch, model, optimizer, loss_scaler):
+def save_model_noddp(args, epoch, model, optimizer, loss_scaler, name=None):
     output_dir = Path(args.save_path)
     epoch_name = str(epoch)
     if loss_scaler is not None:
-        checkpoint_paths = [output_dir / ('checkpoint-%s.pth' % epoch_name)]
+        checkpoint_paths = [output_dir / f'{name}.pth']
         # don't save encoder weight
         weight = {}
         model_dic = model.state_dict()
@@ -734,74 +757,53 @@ def add_weight_decay(model, freeze_enc, scale=0.1, weight_decay=1e-5, skip_list=
             {'params': enc_weight, 'weight_decay': weight_decay, "lr_scale": scale}]
 
 
-def add_weight_decay_ft(model, translator_ft, scale=0.08, weight_decay=1e-5, skip_list=()):
+def add_weight_decay_ft(model, module_ft, scale=0.1, weight_decay=1e-5, skip_list=(), scratch=False):
     decay = []
     no_decay = []
-    module_weight = []
-    if translator_ft:
-        translator = []
-    for name, param in model.named_parameters():
-        # froze encoder weight   # froze translator weight
-        if name[:3] == 'enc':
-            continue
-        elif name[:10] == 'translator':
-            if not translator_ft:
-                    continue
+    if module_ft:
+        module = []
+    if scratch:  # train modules from scratch
+        for name, param in model.named_parameters():
+            # froze encoder weight   # froze translator weight
+            if name[:3] == 'enc':
+                continue
             else:
-                translator.append(param)
-            
-        # translator and decoder parameters
-        # ['shrink', 'shrink_linear', 'translator', 'expand_linear']
-        elif name[:6] in ['shrink', 'shrink', 'expand']:  # , 'transl'
-            module_weight.append(param)
-        else:
-            if len(param.shape) == 1 or name.endswith(".bias") or name in skip_list:
-                no_decay.append(param)
-            else:
-                decay.append(param)
-
-    if translator_ft:
-        return [
-        {'params': no_decay, 'weight_decay': 0.},
-        {'params': decay, 'weight_decay': weight_decay},
-        {'params': module_weight, 'weight_decay': weight_decay, "lr_scale": scale},
-        {'params': translator, 'weight_decay': weight_decay, "lr_scale": scale*0.5}]
-    else:
+                if len(param.shape) == 1 or name.endswith(".bias") or name in skip_list:
+                    no_decay.append(param)
+                else:
+                    decay.append(param)
         return [
             {'params': no_decay, 'weight_decay': 0.},
+            {'params': decay, 'weight_decay': weight_decay}]
+    else:
+        for name, param in model.named_parameters():
+            # froze encoder weight   # froze translator weight
+            if name[:3] == 'enc':
+                continue
+            elif name[:6] in ['transl', 'expand']: 
+                if module_ft:
+                    module.append(param)
+                else:
+                    continue
+            # translator and other module parameters
+            # ['shrink', 'shrink_linear', 'translator', 'expand_linear']
+            elif name[:6] in ['shrink']: 
+                continue
+            else:
+                if len(param.shape) == 1 or name.endswith(".bias") or name in skip_list:
+                    no_decay.append(param)
+                else:
+                    decay.append(param)
+
+        if module_ft:
+            return [
+            {'params': no_decay, 'weight_decay': 0.},
             {'params': decay, 'weight_decay': weight_decay},
-            {'params': module_weight, 'weight_decay': weight_decay, "lr_scale": scale}]
-
-
-def intersectionAndUnionGPU(
-        preds: torch.tensor,
-        target: torch.tensor,
-        num_classes: int,
-        ignore_index=255
-) -> Tuple[torch.tensor, torch.tensor, torch.tensor]:
-    """
-    inputs:
-        preds : shape [H, W]
-        target : shape [H, W]
-        num_classes : Number of classes
-
-    returns :
-        area_intersection : shape [num_class]
-        area_union : shape [num_class]
-        area_target : shape [num_class]
-    """
-    assert (preds.dim() in [1, 2, 3])
-    assert preds.shape == target.shape
-    preds = preds.view(-1)
-    target = target.view(-1)
-    preds[target == ignore_index] = ignore_index
-    intersection = preds[preds == target]
-    area_intersection = torch.histc(intersection.float(), bins=num_classes, min=0, max=num_classes-1)
-    area_output = torch.histc(preds.float(), bins=num_classes, min=0, max=num_classes-1)
-    area_target = torch.histc(target.float(), bins=num_classes, min=0, max=num_classes-1)
-    area_union = area_output + area_target - area_intersection
-    # print(torch.unique(intersection))
-    return area_intersection, area_union, area_target
+            {'params': module, 'weight_decay': weight_decay, "lr_scale": scale}]
+        else:
+            return [
+                {'params': no_decay, 'weight_decay': 0.},
+                {'params': decay, 'weight_decay': weight_decay}]
 
 
 def ensure_path(path):

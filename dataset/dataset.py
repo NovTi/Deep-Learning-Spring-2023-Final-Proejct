@@ -191,6 +191,17 @@ class VMAEUnlabeledDataset(torch.utils.data.Dataset):
         return (imgs, self.masked_position_generator())
 
 
+def process_mask(mask, num_classes=49):
+    num_frames, h, w = mask.shape
+    new_mask = np.zeros((num_frames, num_classes, h, w))
+    for f in range(num_frames):
+        # total cls num is 49
+        for c in range(49):
+            new_mask[f][c][np.where(mask[f] == c)] = 1
+
+    return new_mask
+
+
 class TrainDatset(torch.utils.data.Dataset):
     def __init__(self, args):
         # "../../../dataset/dl/"
@@ -202,9 +213,9 @@ class TrainDatset(torch.utils.data.Dataset):
         self.resize = transforms.Resize((args.input_size, args.input_size))
         self.resize_catmsk = transforms.Resize((14, 14))
         self.transform = transforms.Compose([
-            Stack(p=self.args.reverse),
+            Stack(p=0.0),
             transforms.ToTensor(),
-            RandomHorizontalFlip(p=self.args.flip),
+            # RandomHorizontalFlip(p=self.args.flip),
             GroupNormalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),  # use imagenet default mean/std
             Rearrange("(t c) h w -> t c h w", t=11)
         ])
@@ -214,35 +225,25 @@ class TrainDatset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         # root: ../../../dataset/dl
-        # process mask, convert to binary representation, convert to tensor, resize
-        mask = np.load(os.path.join(self.args.root, f'{self.video_lst[idx]}/processed_mask.npy'))
-        mask = torch.from_numpy(mask)  # [22, 49, 160, 240]
-        catmask = self.resize_catmsk(mask[:11])  # [22, 49, 14, 14]
-        mask = self.resize(mask)  # [22, 49, 224, 224]
+        # load refined mask
+        mask = np.load(os.path.join(self.args.root, f'{self.video_lst[idx]}/refined_mask.npy')) # [22, 160, 240]
+        # convert mask to torch tensor
+        mask = torch.from_numpy(mask[11:])  # [11, 160, 240]
+        # resize mask for loss calculation 
+
+        # mask = self.resize(mask)  #  [11, 224, 224]
+        # """ deal with the smooth value when resizing """
+        # mask[torch.where(mask>0.5)] = 1.0
+        # mask[torch.where(mask<0.5)] = 0.0
 
         # process images
         img_lst = [
             self.resize(Image.open(os.path.join(self.args.root, f'{self.video_lst[idx]}/image_{i}.png')).convert('RGB')) for i in range(11)
         ]
-
+        # transform images
         img_lst = self.transform(img_lst)  # [11, 3, 224, 224]
 
-        return (img_lst, mask, catmask)
-
-    # def _process_mask(self, mask):
-    #     # convert mask to binary representation of num_cls channels
-    #     # mask.shape: [num_frames, h, w]
-    #     num_frames, h, w = mask.shape
-
-    #     # # remove the error pixels
-    #     # uni_label, count = np.unique(mask, return_counts=True)
-
-    #     new_mask = np.zeros((num_frames, self.args.num_cls, h, w))
-    #     for f in range(num_frames):
-    #         # total cls num is 49
-    #         for c in range(self.args.num_cls):
-    #             new_mask[f][c][np.where(mask[f] == c)] = 1
-    #     return new_mask
+        return (img_lst, mask)
 
 
 class ValDatset(torch.utils.data.Dataset):
@@ -254,11 +255,10 @@ class ValDatset(torch.utils.data.Dataset):
         self.video_lst = [f"val/video_{i+1000}" for i in range(1000)]
 
         self.resize = transforms.Resize((args.input_size, args.input_size))
-        self.resize_catmsk = transforms.Resize((14, 14))
+        # no transformations
         self.transform = transforms.Compose([
-            Stack(p=self.args.reverse),
+            Stack(p=0.0),
             transforms.ToTensor(),
-            RandomHorizontalFlip(p=self.args.flip),
             GroupNormalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),  # use imagenet default mean/std
             Rearrange("(t c) h w -> t c h w", t=11)
         ])
@@ -268,12 +268,42 @@ class ValDatset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         # root: ../../../dataset/dl
-        # process mask, convert to binary representation, convert to tensor, resize
-        mask = np.load(os.path.join(self.args.root, f'{self.video_lst[idx]}/processed_mask.npy'))
-        mask = torch.from_numpy(mask)  # [22, 49, 160, 240]
-        catmask = self.resize_catmsk(mask[:11])  # [22, 49, 14, 14]
-        mask = self.resize(mask)  # [22, 49, 224, 224]
+        # load mask
+        mask = np.load(os.path.join(self.args.root, f'{self.video_lst[idx]}/refined_mask.npy'))
+        # convert mask to torch tensor
+        mask = torch.from_numpy(mask[11:])   # [11, 160, 240]
 
+        # process images
+        img_lst = [
+            self.resize(Image.open(os.path.join(self.args.root, f'{self.video_lst[idx]}/image_{i}.png')).convert('RGB')) for i in range(11)
+        ]
+        # basic transform of images
+        img_lst = self.transform(img_lst)  # [11, 3, 224, 224]
+
+        return (img_lst, mask)
+
+
+class TestDatset(torch.utils.data.Dataset):
+    def __init__(self, args):
+        # "../../../dataset/dl/"
+        self.args = args
+
+        # create the video list, each contains 22 frames
+        self.video_lst = [f"hidden/video_{i+15000}" for i in range(2000)]
+
+        self.resize = transforms.Resize((args.input_size, args.input_size))
+        self.transform = transforms.Compose([
+            Stack(p=0.0),
+            transforms.ToTensor(),
+            GroupNormalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),  # use imagenet default mean/std
+            Rearrange("(t c) h w -> t c h w", t=11)
+        ])
+
+    def __len__(self):
+        return len(self.video_lst)
+
+    def __getitem__(self, idx):
+        # root: ../../../dataset/dl
         # process images
         img_lst = [
             self.resize(Image.open(os.path.join(self.args.root, f'{self.video_lst[idx]}/image_{i}.png')).convert('RGB')) for i in range(11)
@@ -281,11 +311,5 @@ class ValDatset(torch.utils.data.Dataset):
 
         img_lst = self.transform(img_lst)  # [11, 3, 224, 224]
 
-        return (img_lst, mask, catmask)
+        return img_lst
 
-
-if __name__ == "__main__":
-    dataset = UnlabeledDataset('../../../dataset/dl/unlabeled', None)
-
-
-    

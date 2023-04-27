@@ -1,111 +1,211 @@
-import argparse
+import os
+import sys
 import pdb
+import copy
+import math
+import time
+import random
+import argparse
+import datetime
+import numpy as np
+from pathlib import Path
+from einops import rearrange
+from torchmetrics import JaccardIndex
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.backends.cudnn as cudnn
+import torchvision.transforms as transforms
 
 
-def get_args_parser():
-    parser = argparse.ArgumentParser('VideoMAE pre-training script', add_help=False)
-    parser.add_argument('--batch_size', default=64, type=int)
-    parser.add_argument('--epochs', default=800, type=int)
-    parser.add_argument('--save_ckpt_freq', default=50, type=int)
+import timm
+assert timm.__version__ == "0.3.2"
+import timm.optim.optim_factory as optim_factory
 
-    # Model parameters
-    parser.add_argument('--model', default='pretrain_videomae_base_patch16_224', type=str, metavar='MODEL',
-                        help='Name of model to train')
+from models.model_manager import ModelManager
 
-    parser.add_argument('--decoder_depth', default=4, type=int,
-                        help='depth of decoder')
+from dataset.dataset import TestDatset
 
-    parser.add_argument('--mask_type', default='tube', choices=['random', 'tube'],
-                        type=str, help='masked strategy of video tokens/patches')
-
-    parser.add_argument('--mask_ratio', default=0.75, type=float,
-                        help='ratio of the visual tokens/patches need be masked')
-
-    parser.add_argument('--input_size', default=224, type=int,
-                        help='videos input size for backbone')
-
-    parser.add_argument('--drop_path', type=float, default=0.0, metavar='PCT',
-                        help='Drop path rate (default: 0.1)')
-                        
-    parser.add_argument('--normlize_target', default=True, type=bool,
-                        help='normalized the target patch pixels')
-
-    # Optimizer parameters
-    parser.add_argument('--opt', default='adamw', type=str, metavar='OPTIMIZER',
-                        help='Optimizer (default: "adamw"')
-    parser.add_argument('--opt_eps', default=1e-8, type=float, metavar='EPSILON',
-                        help='Optimizer Epsilon (default: 1e-8)')
-    parser.add_argument('--opt_betas', default=None, type=float, nargs='+', metavar='BETA',
-                        help='Optimizer Betas (default: None, use opt default)')
-    parser.add_argument('--clip_grad', type=float, default=None, metavar='NORM',
-                        help='Clip gradient norm (default: None, no clipping)')
-    parser.add_argument('--momentum', type=float, default=0.9, metavar='M',
-                        help='SGD momentum (default: 0.9)')
-    parser.add_argument('--weight_decay', type=float, default=0.05,
-                        help='weight decay (default: 0.05)')
-    parser.add_argument('--weight_decay_end', type=float, default=None, help="""Final value of the
-        weight decay. We use a cosine schedule for WD. 
-        (Set the same value with args.weight_decay to keep weight decay no change)""")
-
-    parser.add_argument('--lr', type=float, default=1.5e-4, metavar='LR',
-                        help='learning rate (default: 1.5e-4)')
-    parser.add_argument('--warmup_lr', type=float, default=1e-6, metavar='LR',
-                        help='warmup learning rate (default: 1e-6)')
-    parser.add_argument('--min_lr', type=float, default=1e-5, metavar='LR',
-                        help='lower lr bound for cyclic schedulers that hit 0 (1e-5)')
-
-    parser.add_argument('--warmup_epochs', type=int, default=40, metavar='N',
-                        help='epochs to warmup LR, if scheduler supports')
-    parser.add_argument('--warmup_steps', type=int, default=-1, metavar='N',
-                        help='epochs to warmup LR, if scheduler supports')
-    parser.add_argument('--use_checkpoint', action='store_true')
-    parser.set_defaults(use_checkpoint=False)
-
-    # Augmentation parameters
-    parser.add_argument('--color_jitter', type=float, default=0.0, metavar='PCT',
-                        help='Color jitter factor (default: 0.4)')
-    parser.add_argument('--train_interpolation', type=str, default='bicubic',
-                        help='Training interpolation (random, bilinear, bicubic default: "bicubic")')
-
-    # Dataset parameters
-    parser.add_argument('--data_path', default='/path/to/list_kinetics-400', type=str,
-                        help='dataset path')
-    parser.add_argument('--imagenet_default_mean_and_std', default=True, action='store_true')
-    parser.add_argument('--num_frames', type=int, default= 16)
-    parser.add_argument('--sampling_rate', type=int, default= 4)
-    parser.add_argument('--output_dir', default='',
-                        help='path where to save, empty for no saving')
-    parser.add_argument('--log_dir', default=None,
-                        help='path where to tensorboard log')
-    parser.add_argument('--device', default='cuda',
-                        help='device to use for training / testing')
-    parser.add_argument('--seed', default=0, type=int)
-    parser.add_argument('--resume', default='', help='resume from checkpoint')
-    parser.add_argument('--auto_resume', action='store_true')
-    parser.add_argument('--no_auto_resume', action='store_false', dest='auto_resume')
-    parser.set_defaults(auto_resume=True)
-
-    parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
-                        help='start epoch')
-    parser.add_argument('--num_workers', default=10, type=int)
-    parser.add_argument('--pin_mem', action='store_true',
-                        help='Pin CPU memory in DataLoader for more efficient (sometimes) transfer to GPU.')
-    parser.add_argument('--no_pin_mem', action='store_false', dest='pin_mem',
-                        help='')
-    parser.set_defaults(pin_mem=True)
-
-    # distributed training parameters
-    parser.add_argument('--world_size', default=1, type=int,
-                        help='number of distributed processes')
-    parser.add_argument('--local_rank', default=-1, type=int)
-    parser.add_argument('--dist_on_itp', action='store_true')
-    parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
-
-    return parser
+from utils.logger import Logger as Log
+from utils.util import load_cfg_from_cfg_file, merge_cfg_from_list, load_model_noddp, ensure_path, interpolate_pos_embed
 
 
-if __name__ == '__main__':
-    args = get_args_parser()
-    args = args.parse_args()
-    pdb.set_trace()
-    a = 1
+class Tester(object):
+    def __init__(self, args):
+        self.args = args
+        self.ModelManager = ModelManager()
+        self.device = torch.device(args.device)
+        # set dataloader
+        self._set_dataloader()
+        # set model, optimizer, scheduler
+        self._set_model()
+
+
+    def _set_dataloader(self):
+        dataset_test = TestDatset(args=self.args)
+        self.test_loader = torch.utils.data.DataLoader(
+            dataset_test, shuffle=False,
+            batch_size=10,
+            num_workers=self.args.num_workers,
+            drop_last=False
+        )
+
+
+    def _load_module_weight(self, module, name, checkpoint):
+        model_dict = module.state_dict()
+        for index, key in enumerate(model_dict.keys()):
+            if model_dict[key].shape == checkpoint[name+'.'+key].shape:
+                model_dict[key] = checkpoint[name+'.'+key]
+            else:
+                Log.info('Pre-trained shape and model shape dismatch for {}'.format(key))
+                sys.exit(0)
+
+        msg = module.load_state_dict(model_dict, strict=True)
+        Log.info(f'{name}: ' + str(msg))
+            
+
+    def _load_weight(self):
+        # load encoder weight from MAE
+        checkpoint = torch.load(self.args.enc_weight, map_location='cpu')
+        checkpoint = checkpoint['model']
+
+        interpolate_pos_embed(self.model.enc, checkpoint)
+
+        model_dict = self.model.enc.state_dict()
+
+        for index, key in enumerate(model_dict.keys()):
+            if model_dict[key].shape == checkpoint[key].shape:
+                model_dict[key] = checkpoint[key]
+            else:
+                Log.info('Pre-trained shape and model shape dismatch for {}'.format(key))
+                sys.exit(0)
+
+        msg = self.model.enc.load_state_dict(model_dict, strict=True)
+        Log.info('MAE Encoder: ' + str(msg))
+
+        model_dict = None
+        checkpoint = None
+
+        checkpoint = torch.load(self.args.segmenter_weight, map_location='cpu')
+        checkpoint = checkpoint['model']
+        
+        # load weight seperately to save the memory usage
+        self._load_module_weight(self.model.shrink, 'shrink', checkpoint)
+        self._load_module_weight(self.model.shrink_linear, 'shrink_linear', checkpoint)
+        self._load_module_weight(self.model.translator, 'translator', checkpoint)
+        self._load_module_weight(self.model.expand_linear, 'expand_linear', checkpoint)
+        self._load_module_weight(self.model.f11_dec, 'f11_dec', checkpoint)
+        self._load_module_weight(self.model.s11_dec, 's11_dec', checkpoint)
+        self._load_module_weight(self.model.seghead, 'seghead', checkpoint)
+
+
+    def _set_model(self):
+        self.model = self.ModelManager.get_model(self.args.model)(
+            args=self.args,
+            img_size=self.args.input_size,
+            shrink_embed=self.args.shrink_embed,
+            trans_embed=self.args.trans_embed,
+            num_heads=self.args.num_heads,
+            mlp_ratio=self.args.mlp_ratio,
+            num_layers=self.args.num_layers,
+            device=self.args.device)
+        # load the MAE encoder weight
+        self._load_weight()
+
+        self.model.to(self.device)
+
+
+    def test(self):
+        self.model.eval()
+        start_time = time.time()
+
+        resize_back = transforms.Resize((160, 240))
+        pred_lst = []
+
+        for i, (imgs) in enumerate(self.test_loader):
+            imgs = imgs.to(self.device, non_blocking=True, dtype=torch.float)
+            # if i % self.args.test_log_freq == 0:
+            Log.info(f"Currently Ep {i} | Total {len(self.test_loader)} Epochs")
+
+            with torch.no_grad():
+                x = self.model(imgs, label=None, skip=self.args.skip, train=False)  # only preserve the last frame
+                x = F.interpolate(x, size=224, mode='bilinear', align_corners=True)  # [B, 49, 224, 224]
+                x = resize_back(x) # [B, 49, 160, 240]
+                """ deal with the smooth value when resizing """
+                x[torch.where(x>0.5)] = 1.0
+                x[torch.where(x<0.5)] = 0.0
+                pred_lst.append(x.argmax(1).cpu().numpy())  # [B, 160, 240]
+
+        
+        total_predict = np.concatenate(pred_lst, axis=0)
+        np.save(os.path.join(self.args.save_path, 'prediction.npy'), total_predict)
+        # Log info of the whole epoch
+        total_time = time.time() - start_time
+        total_time_str = str(datetime.timedelta(seconds=int(total_time)))
+        msg = f"Testing done | time {total_time_str} | Good Luck"
+        Log.info(msg)
+
+
+def parse_config():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--config', required=True, type=str, help='config file path')
+    parser.add_argument('--exp_name', required=True, type=str, help='experiment name')
+    parser.add_argument('--exp_id', required=True, type=str, help='config modifications')
+    args = parser.parse_args()
+    cfg = load_cfg_from_cfg_file(args.config)
+    # update exp_name and exp_id
+    cfg['exp_name'] = args.exp_name
+    cfg['exp_id'] = args.exp_id
+    return cfg
+
+
+if __name__ == "__main__":
+    args = parse_config()
+    seed = args.seed
+    if seed is not None:
+        cudnn.benchmark = True
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+
+    # deal with the scienciftic num
+    args.min_lr = 1e-08
+    if 'skip' in args.exp_id:
+        args.skip = True
+    else:
+        args.skip = False
+
+    # adjust device for easy testing on cpu environment
+    if torch.cuda.is_available():
+        args.device = 'cuda'
+    else:
+        args.device = 'cpu'
+
+    save_path = f"./results/{datetime.date.today()}:{args.exp_name}/{args.exp_id}"
+    # save_path = f"./results/{args.exp_name}/{args.exp_id}"
+    save_flag = ensure_path(save_path)
+    args.save_path = save_path
+
+    Log.init(
+        log_file=os.path.join(save_path, 'output.log'),
+        logfile_level='info',
+        stdout_level='info',
+        rewrite=True
+    )
+
+    # beautify the log output of the configuration
+    msg = '\nConfig: \n'
+    arg_lst = str(args).split('\n')
+    for arg in arg_lst:
+        msg += f'   {arg}\n'
+    msg += f'\n[exp_name]: {args.exp_name}\n[exp_id]: {args.exp_id}\n[save_path]: {args.save_path}\n'
+    Log.info(msg)
+
+    args.update()
+
+    # pretain
+    finetuner = Tester(args)
+    finetuner.test()

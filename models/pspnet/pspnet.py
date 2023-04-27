@@ -33,27 +33,12 @@ class PSPNet(nn.Module):
             bn_type=self.bn_type
         )
 
-        # take the bottleneck out for the finetuning / adjust bottleneck type
-        # 0: doesn't have dropout2d / 1: has dropout2d
-        if args.bottle_type == 0:
-            self.bottleneck = nn.Sequential(
-                nn.Conv2d(in_channels+4*(in_channels//4), in_channels//4, 
-                            kernel_size=args.bottle_conv, padding=1, dilation=1, bias=False),
-                nn.ReLU())
-        elif args.bottle_type == 1:
-            self.bottleneck = nn.Sequential(
-                nn.Conv2d(in_channels+4*(in_channels//4), in_channels//4, \
-                            kernel_size=args.bottle_conv, padding=1, dilation=1, bias=False),
-                nn.ReLU(),
-                nn.Dropout2d(0.1)
-            )
-        else:  # original one
-            self.bottleneck = nn.Sequential(
-                nn.Conv2d(in_channels+4*(in_channels//4), in_channels//4, 
-                            kernel_size=args.bottle_conv, padding=1, dilation=1, bias=False),
-                ModuleHelper.BNReLU(in_channels//4, bn_type=self.bn_type),
-                # nn.Dropout2d(0.1)
-            )
+        self.bottleneck = nn.Sequential(
+            nn.Conv2d(in_channels+4*(in_channels//4), in_channels//4, 
+                        kernel_size=3, padding=1, dilation=1, bias=False),
+            ModuleHelper.BNReLU(in_channels//4, bn_type=self.bn_type),
+            nn.Dropout2d(0.1)
+        )
 
         if args.classifier == 'simple':
             self.classifier = nn.Sequential(OrderedDict([('cls', nn.Conv2d(512, self.num_classes, kernel_size=1, stride=1, bias=True))]))
@@ -72,7 +57,7 @@ class PSPNet(nn.Module):
                     if m.bias is not None:
                         m.bias.data.zero_()
 
-    def forward(self, x):
+    def forward(self, x, train=True):
         # x = self.proj_head(x)
 
         # psp module
@@ -81,6 +66,8 @@ class PSPNet(nn.Module):
         # bottleneck
         x_bt = self.bottleneck(torch.cat(x_psp, 1))
         
+        if not train:
+            return x_bt
         # seg module
         x_seg = self.classifier(x_bt)
 
