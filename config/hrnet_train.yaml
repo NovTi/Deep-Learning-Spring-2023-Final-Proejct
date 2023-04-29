@@ -1,0 +1,50 @@
+TRAIN:
+  batch_size: 4
+  epochs: 250
+  accum_iter: 2
+  log_freq: 30  # log information every 100 iterations
+  val_log_freq: 50
+  save_freq: 5
+  opt: AdamW  # sgd or adamw
+  val_freq: 5
+
+MODLE:
+  model: hrnet48  # or hrnet48_ocr
+  height: 160
+  width: 240
+  input_size: 224
+  norm_pix_loss: False
+  skip: True
+  seghead: hrnet48
+  classifier:
+  bn_type: torchbn
+  proj_dim: 256
+  module_ft: True
+  scratch: True  # train translator from scratch
+
+OPT:
+  weight_decay: 0.005
+  momentum: 0.9
+  nesterov: True
+  lr:
+  blr: 0.0008  # 0.00015
+  min_lr: 1e-08
+  warmup_epochs: 5
+  eff_batch_adjust: 22  # equal to adjusting learning rate
+
+DATA:
+  output_dir: results
+  num_frames: 22
+  device: cuda
+  seed: 0
+  resume: ''
+  start_epoch: 0
+  root: ../../../dataset/dl/
+  num_cls: 49  # 48 + 1 (background)
+
+AUG:
+  flip: 0.5
+
+DIST:
+  num_workers: 8
+  pin_mem: True

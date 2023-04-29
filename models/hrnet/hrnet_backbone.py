@@ -301,24 +301,24 @@ class HighResolutionNet(nn.Module):
         self.inplanes = 64
         super(HighResolutionNet, self).__init__()
 
-        # if os.environ.get('full_res_stem'):
-        #     Log.info("using full-resolution stem with stride=1")
-        #     stem_stride = 1
-        #     self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=stem_stride, padding=1,
-        #                            bias=False)
-        #     self.bn1 = ModuleHelper.BatchNorm2d(bn_type=bn_type)(64, momentum=bn_momentum)
-        #     self.relu = nn.ReLU(inplace=False)
-        #     self.layer1 = self._make_layer(Bottleneck, 64, 64, 4, bn_type=bn_type, bn_momentum=bn_momentum)
-        # else:
-        #     stem_stride = 2
-        #     self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=stem_stride, padding=1,
-        #                            bias=False)
-        #     self.bn1 = ModuleHelper.BatchNorm2d(bn_type=bn_type)(64, momentum=bn_momentum)
-        #     self.conv2 = nn.Conv2d(64, 64, kernel_size=3, stride=stem_stride, padding=1,
-        #                            bias=False)
-        #     self.bn2 = ModuleHelper.BatchNorm2d(bn_type=bn_type)(64, momentum=bn_momentum)
-        #     self.relu = nn.ReLU(inplace=False)
-        #     self.layer1 = self._make_layer(Bottleneck, 64, 64, 4, bn_type=bn_type, bn_momentum=bn_momentum)
+        if os.environ.get('full_res_stem'):
+            Log.info("using full-resolution stem with stride=1")
+            stem_stride = 1
+            self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=stem_stride, padding=1,
+                                   bias=False)
+            self.bn1 = ModuleHelper.BatchNorm2d(bn_type=bn_type)(64, momentum=bn_momentum)
+            self.relu = nn.ReLU(inplace=False)
+            self.layer1 = self._make_layer(Bottleneck, 64, 64, 4, bn_type=bn_type, bn_momentum=bn_momentum)
+        else:
+            stem_stride = 2
+            self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=stem_stride, padding=1,
+                                   bias=False)
+            self.bn1 = ModuleHelper.BatchNorm2d(bn_type=bn_type)(64, momentum=bn_momentum)
+            self.conv2 = nn.Conv2d(64, 64, kernel_size=3, stride=stem_stride, padding=1,
+                                   bias=False)
+            self.bn2 = ModuleHelper.BatchNorm2d(bn_type=bn_type)(64, momentum=bn_momentum)
+            self.relu = nn.ReLU(inplace=False)
+            self.layer1 = self._make_layer(Bottleneck, 64, 64, 4, bn_type=bn_type, bn_momentum=bn_momentum)
 
         self.stage2_cfg = cfg['STAGE2']
         num_channels = self.stage2_cfg['NUM_CHANNELS']
@@ -516,19 +516,19 @@ class HighResolutionNet(nn.Module):
 
     def forward(self, x):
 
-        # if os.environ.get('full_res_stem'):
-        #     x = self.conv1(x)
-        #     x = self.bn1(x)
-        #     x = self.relu(x)
-        # else:
-        #     x = self.conv1(x)
-        #     x = self.bn1(x)
-        #     x = self.relu(x)
-        #     x = self.conv2(x)
-        #     x = self.bn2(x)
-        #     x = self.relu(x)
+        if os.environ.get('full_res_stem'):
+            x = self.conv1(x)
+            x = self.bn1(x)
+            x = self.relu(x)
+        else:
+            x = self.conv1(x)
+            x = self.bn1(x)
+            x = self.relu(x)
+            x = self.conv2(x)
+            x = self.bn2(x)
+            x = self.relu(x)
 
-        # x = self.layer1(x)
+        x = self.layer1(x)
         x_list = []
         for i in range(self.stage2_cfg['NUM_BRANCHES']):
             if self.transition1[i] is not None:

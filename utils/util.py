@@ -757,53 +757,17 @@ def add_weight_decay(model, freeze_enc, scale=0.1, weight_decay=1e-5, skip_list=
             {'params': enc_weight, 'weight_decay': weight_decay, "lr_scale": scale}]
 
 
-def add_weight_decay_ft(model, module_ft, scale=0.1, weight_decay=1e-5, skip_list=(), scratch=False):
+def add_weight_decay_ft(model, weight_decay=1e-5, skip_list=()):
     decay = []
     no_decay = []
-    if module_ft:
-        module = []
-    if scratch:  # train modules from scratch
-        for name, param in model.named_parameters():
-            # froze encoder weight   # froze translator weight
-            if name[:3] == 'enc':
-                continue
-            else:
-                if len(param.shape) == 1 or name.endswith(".bias") or name in skip_list:
-                    no_decay.append(param)
-                else:
-                    decay.append(param)
-        return [
-            {'params': no_decay, 'weight_decay': 0.},
-            {'params': decay, 'weight_decay': weight_decay}]
-    else:
-        for name, param in model.named_parameters():
-            # froze encoder weight   # froze translator weight
-            if name[:3] == 'enc':
-                continue
-            elif name[:6] in ['transl', 'expand']: 
-                if module_ft:
-                    module.append(param)
-                else:
-                    continue
-            # translator and other module parameters
-            # ['shrink', 'shrink_linear', 'translator', 'expand_linear']
-            elif name[:6] in ['shrink']: 
-                continue
-            else:
-                if len(param.shape) == 1 or name.endswith(".bias") or name in skip_list:
-                    no_decay.append(param)
-                else:
-                    decay.append(param)
-
-        if module_ft:
-            return [
-            {'params': no_decay, 'weight_decay': 0.},
-            {'params': decay, 'weight_decay': weight_decay},
-            {'params': module, 'weight_decay': weight_decay, "lr_scale": scale}]
+    for name, param in model.named_parameters():
+        if len(param.shape) == 1 or name.endswith(".bias") or name in skip_list:
+            no_decay.append(param)
         else:
-            return [
-                {'params': no_decay, 'weight_decay': 0.},
-                {'params': decay, 'weight_decay': weight_decay}]
+            decay.append(param)
+    return [
+        {'params': no_decay, 'weight_decay': 0.},
+        {'params': decay, 'weight_decay': weight_decay}]
 
 
 def ensure_path(path):

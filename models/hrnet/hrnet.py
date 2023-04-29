@@ -22,6 +22,11 @@ from models.module_helper import ModuleHelper
 from models.hrnet.hrnet_config import MODEL_CONFIGS
 from models.hrnet.hrnet_backbone import HighResolutionNet
 
+from utils.util import load_cfg_from_cfg_file
+
+from models.hrnet.spatial_ocr_block import SpatialGather_Module, SpatialOCR_Module
+
+
 # from lib.models.modules.projection import ProjectionHead
 
 
@@ -65,30 +70,34 @@ class HRNet_W48(nn.Module):
 
 
 class HRNet_W48_OCR(nn.Module):
-    def __init__(self, configer):
+    def __init__(self, args):
         super(HRNet_W48_OCR, self).__init__()
-        self.configer = configer
-        self.num_classes = self.configer.get('data', 'num_classes')
-        self.backbone = HighResolutionNet(configer).get_backbone()
+        # self.configer = configer
+        # self.num_classes = self.configer.get('data', 'num_classes')
+        self.num_classes = args.num_cls
+        self.backbone = HighResolutionNet(
+            MODEL_CONFIGS[args.seghead],
+            bn_type=args.bn_type,  # 'torchsyncbn',
+            bn_momentum=0.1
+        )
+        # self.backbone = HighResolutionNet(configer).get_backbone()
 
         in_channels = 720
         self.conv3x3 = nn.Sequential(
             nn.Conv2d(in_channels, 512, kernel_size=3, stride=1, padding=1),
-            ModuleHelper.BNReLU(512, bn_type=self.configer.get('network', 'bn_type')),
+            ModuleHelper.BNReLU(512, bn_type=args.bn_type),
         )
-        from lib.models.modules.spatial_ocr_block import SpatialGather_Module
         self.ocr_gather_head = SpatialGather_Module(self.num_classes)
-        from lib.models.modules.spatial_ocr_block import SpatialOCR_Module
         self.ocr_distri_head = SpatialOCR_Module(in_channels=512,
                                                  key_channels=256,
                                                  out_channels=512,
                                                  scale=1,
                                                  dropout=0.05,
-                                                 bn_type=self.configer.get('network', 'bn_type'))
+                                                 bn_type=args.bn_type)
         self.cls_head = nn.Conv2d(512, self.num_classes, kernel_size=1, stride=1, padding=0, bias=True)
         self.aux_head = nn.Sequential(
             nn.Conv2d(in_channels, in_channels, kernel_size=3, stride=1, padding=1),
-            ModuleHelper.BNReLU(in_channels, bn_type=self.configer.get('network', 'bn_type')),
+            ModuleHelper.BNReLU(in_channels, bn_type=args.bn_type),
             nn.Conv2d(in_channels, self.num_classes, kernel_size=1, stride=1, padding=0, bias=True)
         )
 
@@ -113,7 +122,8 @@ class HRNet_W48_OCR(nn.Module):
 
         out_aux = F.interpolate(out_aux, size=(x_.size(2), x_.size(3)), mode="bilinear", align_corners=True)
         out = F.interpolate(out, size=(x_.size(2), x_.size(3)), mode="bilinear", align_corners=True)
-        return out_aux, out
+        # return out_aux, out
+        return out
 
 
 class HRNet_W48_OCR_B(nn.Module):
@@ -172,3 +182,14 @@ class HRNet_W48_OCR_B(nn.Module):
         out_aux = F.interpolate(out_aux, size=(x_.size(2), x_.size(3)), mode="bilinear", align_corners=True)
         out = F.interpolate(out, size=(x_.size(2), x_.size(3)), mode="bilinear", align_corners=True)
         return out_aux, out
+
+
+if __name__ == '__main__':
+    args = load_cfg_from_cfg_file('config/predict_pretrain.yaml')
+    args.num_cls = 49
+    args.seghead = 'hrnet48'
+    args.bn_type = 'torchbn'
+    net = HRNet_W48_OCR(args)
+    a = torch.rand(11, 3, 160, 240)
+    _, out = net(a)
+    pdb.set_trace()

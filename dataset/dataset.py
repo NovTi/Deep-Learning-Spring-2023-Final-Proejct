@@ -215,7 +215,7 @@ class TrainDatset(torch.utils.data.Dataset):
         self.transform = transforms.Compose([
             Stack(p=0.0),
             transforms.ToTensor(),
-            # RandomHorizontalFlip(p=self.args.flip),
+            RandomHorizontalFlip(p=self.args.flip), 
             GroupNormalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),  # use imagenet default mean/std
             Rearrange("(t c) h w -> t c h w", t=11)
         ])
@@ -281,6 +281,59 @@ class ValDatset(torch.utils.data.Dataset):
         img_lst = self.transform(img_lst)  # [11, 3, 224, 224]
 
         return (img_lst, mask)
+
+
+class HRDatset(torch.utils.data.Dataset):
+    def __init__(self, args, train=True):
+        # "../../../dataset/dl/"
+        self.args = args
+        self.train = train
+        # create the video list, each contains 22 frames
+        self.video_lst = []
+        self.tensor = transforms.ToTensor()
+        if train:
+            for i in range(1000):
+                self.video_lst.append(f"train/video_{i}")
+            self.transform = transforms.Compose([
+                # Stack(p=0.0),
+                # transforms.ToTensor(),
+                transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+            ])
+            self.horizontal = RandomHorizontalFlip(p=self.args.flip)
+        else:
+            for i in range(1000):
+                self.video_lst.append(f"val/video_{i+1000}")
+            self.transform = transforms.Compose([
+                # Stack(p=0.0),
+                # transforms.ToTensor(),
+                transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+            ])
+
+
+    def __len__(self):
+        return len(self.video_lst)
+
+    def __getitem__(self, idx):
+        # root: ../../../dataset/dl
+        # load refined mask
+        mask = np.load(os.path.join(self.args.root, f'{self.video_lst[idx]}/refined_mask.npy')) # [22, 160, 240]
+        # convert mask to torch tensor
+        mask = torch.from_numpy(mask)  # [22, 160, 240]
+
+        # process images
+        imgs = [
+            self.tensor(Image.open(os.path.join(self.args.root, f'{self.video_lst[idx]}/image_{i}.png')).convert('RGB')).unsqueeze(0) for i in range(22)
+        ]  # single img: [1, 3, 160, 240]
+
+        imgs = torch.cat(imgs)  # [22, 3, 160, 240]
+        # transform images
+        imgs = self.transform(imgs)  # [22, 3, 224, 224]
+
+        if self.train:
+            imgs = self.horizontal(imgs)
+            mask = self.horizontal(mask)
+
+        return (imgs, mask)
 
 
 class TestDatset(torch.utils.data.Dataset):
