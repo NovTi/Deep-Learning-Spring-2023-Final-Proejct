@@ -18,11 +18,6 @@ import torch.nn.functional as F
 import torch.backends.cudnn as cudnn
 import torchvision.transforms as transforms
 
-
-import timm
-assert timm.__version__ == "0.3.2"
-import timm.optim.optim_factory as optim_factory
-
 from dataset.dataset import HRDatset
 
 from utils.logger import Logger as Log
