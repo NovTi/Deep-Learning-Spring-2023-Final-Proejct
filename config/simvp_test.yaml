@@ -2,7 +2,7 @@ TRAIN:
   batch_size: 10
   epochs: 300
   accum_iter: 0
-  log_freq: 50  # log information every 100 iterations
+  log_freq: 80  # log information every 100 iterations
   opt: AdamW  # sgd or adamw
   test_log_freq: 10
   test: True
@@ -14,20 +14,11 @@ MODLE:
   input_size: 224
   norm_pix_loss: False
   skip: True
-  enc_weight: results/mae_pretrain/ep320/mae-285.pth
-  predict_weight: results/predict_pretrain/ft_se128_te768_hd12_mp6_l8_w3_eff11_n/checkpoint-295.pth
-  shrink_embed: 128   # shrink channel from 768 to 32 fro saving computation
-  trans_embed: 768  # translator
-  num_heads: 12  # translator
-  mlp_ratio: 6  # translator
-  num_layers: 8  # translator
-  dropout: 0.0  # translator
-  learn_pos_embed: False
-  dec_blocks: 3  # decoder
+  simvp_weight: results/simvpv2/dl_simvp_in128_lr002_ep130/last.pth
 
 SEGHEAD:
   seghead: hrnet48
-  seghead_weight: results/unet/best.pth
+  seghead_weight: results/unet/ep300/best.pth
   classifier:
   bn_type: torchbn
   proj_dim: 256

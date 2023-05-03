@@ -336,6 +336,41 @@ class HRDatset(torch.utils.data.Dataset):
         return (imgs, mask)
 
 
+class ValTestDatset(torch.utils.data.Dataset):
+    def __init__(self, args):
+        # "../../../dataset/dl/"
+        self.args = args
+
+        # create the video list, each contains 22 frames
+        self.video_lst = [f"val/video_{i+1000}" for i in range(1000)]
+
+        self.resize = transforms.Resize((160, 240))
+        self.transform = transforms.Compose([
+            Stack(p=0.0),
+            transforms.ToTensor(),
+            GroupNormalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),  # use imagenet default mean/std
+            Rearrange("(t c) h w -> t c h w", t=11)
+        ])
+
+    def __len__(self):
+        return len(self.video_lst)
+
+    def __getitem__(self, idx):
+        # root: ../../../dataset/dl
+        mask = np.load(os.path.join(self.args.root, f'{self.video_lst[idx]}/refined_mask.npy'))[-1] # [160, 240]
+        # convert mask to torch tensor
+        mask = torch.from_numpy(mask)  # [160, 240]
+
+        # process images
+        imgs = [
+            self.resize(Image.open(os.path.join(self.args.root, f'{self.video_lst[idx]}/image_{i}.png')).convert('RGB')) for i in range(11)
+        ]
+
+        imgs = self.transform(imgs)  # [11, 3, 224, 224]
+
+        return (imgs, mask)
+
+
 class TestDatset(torch.utils.data.Dataset):
     def __init__(self, args):
         # "../../../dataset/dl/"
@@ -344,7 +379,7 @@ class TestDatset(torch.utils.data.Dataset):
         # create the video list, each contains 22 frames
         self.video_lst = [f"hidden/video_{i+15000}" for i in range(2000)]
 
-        self.resize = transforms.Resize((args.input_size, args.input_size))
+        self.resize = transforms.Resize((160, 240))
         self.transform = transforms.Compose([
             Stack(p=0.0),
             transforms.ToTensor(),
@@ -362,7 +397,7 @@ class TestDatset(torch.utils.data.Dataset):
             self.resize(Image.open(os.path.join(self.args.root, f'{self.video_lst[idx]}/image_{i}.png')).convert('RGB')) for i in range(11)
         ]
 
-        img_lst = self.transform(img_lst)  # [11, 3, 224, 224]
+        img_lst = self.transform(img_lst)  # [11, 3, 160, 240]
 
-        return img_lst
+        return (img_lst, self.video_lst[idx])
 

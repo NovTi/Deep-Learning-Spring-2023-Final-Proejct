@@ -18,9 +18,8 @@ import torch.nn.functional as F
 import torch.backends.cudnn as cudnn
 import torchvision.transforms as transforms
 
-from models.cvitvp.cvitvp import CViT_VP
+from models.simvp.model import SimVP_Model
 from models.unet.unet import get_Unet
-from models.hrnet.hrnet import HRNet_W48
 
 from dataset.dataset import TestDatset, ValTestDatset
 
@@ -42,11 +41,17 @@ class Tester(object):
 
 
     def _set_dataloader(self):
-        # dataset_test = TestDatset(args=self.args)
-        dataset_test = ValTestDatset(args=self.args)
+        dataset_test = TestDatset(args=self.args)
+        dataset_valtest = ValTestDatset(args=self.args)
+        self.valtest_loader = torch.utils.data.DataLoader(
+            dataset_valtest, shuffle=False,
+            batch_size=2,
+            num_workers=self.args.num_workers,
+            drop_last=False
+        )
         self.test_loader = torch.utils.data.DataLoader(
             dataset_test, shuffle=False,
-            batch_size=10,
+            batch_size=2,
             num_workers=self.args.num_workers,
             drop_last=False
         )
@@ -67,88 +72,60 @@ class Tester(object):
 
     def _load_weight(self):
         # load encoder weight from MAE
-        checkpoint = torch.load(self.args.enc_weight, map_location='cpu')
-        checkpoint = checkpoint['model']
-
-        interpolate_pos_embed(self.model.enc, checkpoint)
-
-        model_dict = self.model.enc.state_dict()
-
-        for index, key in enumerate(model_dict.keys()):
-            if model_dict[key].shape == checkpoint[key].shape:
-                model_dict[key] = checkpoint[key]
-            else:
-                Log.info('Pre-trained shape and model shape dismatch for {}'.format(key))
-                sys.exit(0)
-
-        msg = self.model.enc.load_state_dict(model_dict, strict=True)
-        Log.info('MAE Encoder: ' + str(msg))
+        checkpoint = torch.load(self.args.simvp_weight, map_location='cpu')
+        # for lastest model of simvp
+        checkpoint = checkpoint['state_dict']
+        msg = self.model.load_state_dict(checkpoint, strict=True)
+        Log.info('SimVP: ' + str(msg))
 
         model_dict = None
         checkpoint = None
 
-        # load CViTVP weights
-        checkpoint = torch.load(self.args.predict_weight, map_location='cpu')
-        checkpoint = checkpoint['model']
-        
-        # load weight seperately to save the memory usage
-        self._load_module_weight(self.model.shrink, 'shrink', checkpoint)
-        self._load_module_weight(self.model.shrink_linear, 'shrink_linear', checkpoint)
-        self._load_module_weight(self.model.translator, 'translator', checkpoint)
-        self._load_module_weight(self.model.expand_linear, 'expand_linear', checkpoint)
-        self._load_module_weight(self.model.dec, 'dec', checkpoint)
-
-        checkpoint = None
-
-        # # load HRNet weights
-        # checkpoint = torch.load(self.args.seghead_weight, map_location='cpu')['model']
-        # msg = self.seg.load_state_dict(checkpoint, strict=True)
-        # Log.info('Seg Head: ' + str(msg))
-
-
-    def _set_model(self):
-        self.model = CViT_VP(
-            img_size=224,
-            shrink_embed=128,
-            trans_embed=768,
-            num_heads=12,
-            mlp_ratio=6,
-            num_layers=8,
-            device='cuda',
-            learn_pos_embed=False)
-
-        self.seg = get_Unet()
         # load UNet weights
         checkpoint = torch.load(self.args.seghead_weight, map_location='cpu')['model']
         msg = self.seg.load_state_dict(checkpoint, strict=True)
         Log.info('Seg Head: ' + str(msg))
-        
-        # self.seg = HRNet_W48(self.args)
-        # load the MAE encoder weight
+
+
+    def _set_model(self):
+        self.model = SimVP_Model([11, 3, 160, 240])
+
+        # small model
+        # self.model = SimVP_Model(
+        #     [11, 3, 160, 240],
+        #     spatio_kernel_enc = 3,
+        #     spatio_kernel_dec = 3,
+        #     model_type = 'gSTA',
+        #     hid_S = 32,
+        #     hid_T = 256,
+        #     N_T = 8,
+        #     N_S = 4,
+        # )
+
+        self.seg = get_Unet()
+        # load the SimVP and UNet weight
         self._load_weight()
 
         self.model.to(self.device)
         self.seg.to(self.device)
-
-    def val_test(self):
+    
+    def valtest(self):
         self.model.eval()
         self.seg.eval()
         start_time = time.time()
 
         pred_lst = []
 
-        for i, (imgs, mask) in enumerate(self.test_loader):
+        for i, (imgs, mask) in enumerate(self.valtest_loader):
             imgs = imgs.to(self.device, non_blocking=True, dtype=torch.float)
-            # if i % self.args.test_log_freq == 0:
-            Log.info(f"Currently Ep {i} | Total {len(self.test_loader)} Epochs")
+            if i % 50 == 0:
+                Log.info(f"Currently Ep {i} | Total {len(self.valtest_loader)} Epochs")
 
             with torch.no_grad():
                 # get the predict results
-                x = self.model(imgs, y=None, skip=self.args.skip, train=False)[:, -1]  # only preserve the last frame
-                # [B, 3, 56, 56]
-                # pdb.set_trace()
+                x = self.model(imgs)[:, -1]  # only preserve the last frame
+                # [B, 3, 64, 64]
                 x = F.interpolate(x, size=(160, 240), mode='bilinear', align_corners=True)  # [B, 3, 224, 224]
-                # x = self.reverse_normalize(x)
 
                 # segment the predict frame
                 x = self.seg(x)   # [B, 49, 160, 240]
@@ -160,18 +137,10 @@ class Tester(object):
                     total_pred = torch.cat((total_pred, x.argmax(1).detach().cpu()), dim=0)
                     total_mask = torch.cat((total_mask, mask), dim=0)
 
-        miou = self.jaccard(total_pred, total_mask).item()        
+        miou = self.jaccard(total_pred, total_mask).item()
         msg = f"miou {miou:.5f}"
         Log.info(msg)
         pdb.set_trace()
-        # total_predict = np.concatenate(pred_lst, axis=0)
-        # np.save(os.path.join(self.args.save_path, 'prediction.npy'), total_predict)
-        # Log info of the whole epoch
-        total_time = time.time() - start_time
-        total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-        msg = f"Testing done | time {total_time_str} | Good Luck"
-        Log.info(msg)
-
 
     def test(self):
         self.model.eval()
@@ -180,35 +149,26 @@ class Tester(object):
 
         pred_lst = []
 
-        for i, (imgs, mask) in enumerate(self.test_loader):
+        for i, (imgs, path) in enumerate(self.test_loader):
             imgs = imgs.to(self.device, non_blocking=True, dtype=torch.float)
-            # if i % self.args.test_log_freq == 0:
-            Log.info(f"Currently Ep {i} | Total {len(self.test_loader)} Epochs")
-
+            if i % 50 == 0:
+                Log.info(f"Currently Ep {i} | Total {len(self.test_loader)} Epochs")
+            pdb.set_trace()
             with torch.no_grad():
                 # get the predict results
-                x = self.model(imgs, y=None, skip=self.args.skip, train=False)[:, -1]  # only preserve the last frame
-                # [B, 3, 56, 56]
-                # pdb.set_trace()
+                x = self.model(imgs)[:, -1]  # only preserve the last frame
+                # [B, 3, 64, 64]
                 x = F.interpolate(x, size=(160, 240), mode='bilinear', align_corners=True)  # [B, 3, 224, 224]
-                # x = self.reverse_normalize(x)
 
                 # segment the predict frame
                 x = self.seg(x)   # [B, 49, 160, 240]
 
                 if i == 0:
                     total_pred = x.argmax(1).detach().cpu()
-                    total_mask = mask
                 else:
                     total_pred = torch.cat((total_pred, x.argmax(1).detach().cpu()), dim=0)
-                    total_mask = torch.cat((total_mask, mask), dim=0)
 
-        miou = self.jaccard(total_pred, total_mask).item()        
-        msg = f"miou {miou:.5f}"
-        Log.info(msg)
-        pdb.set_trace()
-        # total_predict = np.concatenate(pred_lst, axis=0)
-        # np.save(os.path.join(self.args.save_path, 'prediction.npy'), total_predict)
+        np.save(os.path.join('results/', 'prediction.npy'), total_pred)
         # Log info of the whole epoch
         total_time = time.time() - start_time
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))
@@ -275,4 +235,5 @@ if __name__ == "__main__":
 
     # pretain
     finetuner = Tester(args)
-    finetuner.val_test()
+    # finetuner.valtest()
+    finetuner.test()

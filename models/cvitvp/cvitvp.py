@@ -178,13 +178,15 @@ class CViT_VP(nn.Module):
 
         return x
 
-    def forward(self, x, y, skip=False):
+    def forward(self, x, y, skip=False, train=False):
         B, T, C, H, W = x.shape
         # MAE encoder
         x = self.forward_encoder(x)
         identity = x
         x = self.forward_translator(x, T)
         x = self.forward_decoder(x, B, identity, skip=skip)
+        if not train:
+            return x
         loss = self.forward_loss(x, y, B)
 
         return loss

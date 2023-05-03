@@ -184,12 +184,12 @@ class HRNet_W48_OCR_B(nn.Module):
         return out_aux, out
 
 
-if __name__ == '__main__':
-    args = load_cfg_from_cfg_file('config/predict_pretrain.yaml')
-    args.num_cls = 49
-    args.seghead = 'hrnet48'
-    args.bn_type = 'torchbn'
-    net = HRNet_W48_OCR(args)
-    a = torch.rand(11, 3, 160, 240)
-    _, out = net(a)
-    pdb.set_trace()
+# if __name__ == '__main__':
+#     args = load_cfg_from_cfg_file('config/predict_pretrain.yaml')
+#     args.num_cls = 49
+#     args.seghead = 'hrnet48'
+#     args.bn_type = 'torchbn'
+#     net = HRNet_W48_OCR(args)
+#     a = torch.rand(11, 3, 160, 240)
+#     _, out = net(a)
+#     pdb.set_trace()

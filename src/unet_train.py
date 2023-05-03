@@ -23,8 +23,6 @@ import timm
 assert timm.__version__ == "0.3.2"
 import timm.optim.optim_factory as optim_factory
 
-from models.hrnet.hrnet import HRNet_W48, HRNet_W48_OCR
-
 from dataset.dataset import HRDatset
 
 from utils.logger import Logger as Log
@@ -44,7 +42,8 @@ class OutConv(nn.Module):
         output = F.softmax(h, dim =1)
         return h
 
-def get_Unet(n_classes = 49, load_weights = True):
+
+def get_Unet(n_classes=49, load_weights=False):
     net = torch.hub.load('milesial/Pytorch-UNet', 'unet_carvana', pretrained=False, scale=1)
     net.outc = OutConv(64, n_classes)
     if load_weights:
@@ -84,11 +83,7 @@ class Trainer(object):
         )
     
     def _set_model(self):
-        if 'ocr' in self.args.exp_id:
-            self.model = HRNet_W48_OCR(self.args)
-        else:
-            self.model = HRNet_W48(self.args)
-
+        self.model = get_Unet()
         self.model.to(self.device)
 
         # Log.info("\nModel = %s" % str(self.model))
@@ -127,6 +122,7 @@ class Trainer(object):
             optimizer=self.optimizer,
             loss_scaler=self.loss_scaler)
 
+
     def process_mask(self, mask, num_classes=49):
         num_frames, h, w = mask.shape
         new_mask = torch.zeros((num_frames, num_classes, h, w))
@@ -135,6 +131,7 @@ class Trainer(object):
             for c in range(49):
                 new_mask[f][c][torch.where(mask[f] == c)] = 1
         return new_mask
+
 
     def train_one_epoch(self, epoch):
         self.model.train()
@@ -155,6 +152,7 @@ class Trainer(object):
 
             imgs = rearrange(imgs, 'b t c h w->(b t) c h w')
             mask = rearrange(mask, 'b t h w->(b t) h w')
+            
             # shuffle
             idx = torch.randperm(imgs.shape[0])
             imgs = imgs[idx]

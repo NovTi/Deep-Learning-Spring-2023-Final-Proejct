@@ -12,7 +12,7 @@ class SimVP_Model(nn.Module):
 
     """
 
-    def __init__(self, in_shape, hid_S=16, hid_T=256, N_S=4, N_T=4, model_type='gSTA',
+    def __init__(self, in_shape, hid_S=64, hid_T=512, N_S=4, N_T=8, model_type='gSTA',
                  mlp_ratio=8., drop=0.0, drop_path=0.0, spatio_kernel_enc=3,
                  spatio_kernel_dec=3, **kwargs):
         super(SimVP_Model, self).__init__()
